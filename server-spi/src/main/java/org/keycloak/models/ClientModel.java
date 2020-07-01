@@ -17,6 +17,7 @@
 
 package org.keycloak.models;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -61,6 +62,10 @@ public interface ClientModel extends ClientScopeModel, RoleContainerModel,  Prot
     boolean isEnabled();
 
     void setEnabled(boolean enabled);
+
+    boolean isAlwaysDisplayInConsole();
+
+    void setAlwaysDisplayInConsole(boolean alwaysDisplayInConsole);
 
     boolean isSurrogateAuthRequired();
 
@@ -127,10 +132,10 @@ public interface ClientModel extends ClientScopeModel, RoleContainerModel,  Prot
      *
      * @return
      */
-    public String getAuthenticationFlowBindingOverride(String binding);
-    public Map<String, String> getAuthenticationFlowBindingOverrides();
-    public void removeAuthenticationFlowBindingOverride(String binding);
-    public void setAuthenticationFlowBindingOverride(String binding, String flowId);
+    String getAuthenticationFlowBindingOverride(String binding);
+    Map<String, String> getAuthenticationFlowBindingOverrides();
+    void removeAuthenticationFlowBindingOverride(String binding);
+    void setAuthenticationFlowBindingOverride(String binding, String flowId);
 
     boolean isFrontchannelLogout();
     void setFrontchannelLogout(boolean flag);
@@ -165,6 +170,13 @@ public interface ClientModel extends ClientScopeModel, RoleContainerModel,  Prot
      * @param defaultScope
      */
     void addClientScope(ClientScopeModel clientScope, boolean defaultScope);
+
+    /**
+     * Add clientScopes with this client. Add as default scopes (if parameter 'defaultScope' is true) or optional scopes (if parameter 'defaultScope' is false)
+     * @param clientScopes
+     * @param defaultScope
+     */
+    void addClientScopes(Set<ClientScopeModel> clientScopes, boolean defaultScope);
 
     void removeClientScope(ClientScopeModel clientScope);
 

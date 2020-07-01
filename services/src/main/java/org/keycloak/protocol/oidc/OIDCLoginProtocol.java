@@ -26,9 +26,12 @@ import org.keycloak.constants.AdapterConstants;
 import org.keycloak.events.Details;
 import org.keycloak.events.EventBuilder;
 import org.keycloak.events.EventType;
+import org.keycloak.headers.SecurityHeadersProvider;
 import org.keycloak.models.AuthenticatedClientSessionModel;
+import org.keycloak.models.BrowserSecurityHeaders;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.ClientSessionContext;
+import org.keycloak.models.Constants;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserSessionModel;
@@ -38,7 +41,6 @@ import org.keycloak.protocol.oidc.utils.OIDCResponseMode;
 import org.keycloak.protocol.oidc.utils.OIDCResponseType;
 import org.keycloak.representations.AccessTokenResponse;
 import org.keycloak.representations.adapters.action.PushNotBeforeAction;
-import org.keycloak.services.ErrorResponseException;
 import org.keycloak.services.ServicesLogger;
 import org.keycloak.services.managers.AuthenticationManager;
 import org.keycloak.services.managers.AuthenticationSessionManager;
@@ -46,8 +48,8 @@ import org.keycloak.protocol.oidc.utils.OAuth2Code;
 import org.keycloak.protocol.oidc.utils.OAuth2CodeParser;
 import org.keycloak.services.managers.ResourceAdminManager;
 import org.keycloak.sessions.AuthenticationSessionModel;
-import org.keycloak.sessions.CommonClientSessionModel;
 import org.keycloak.util.TokenUtil;
+import org.keycloak.utils.MediaType;
 
 import java.io.IOException;
 import java.net.URI;
@@ -98,6 +100,7 @@ public class OIDCLoginProtocol implements LoginProtocol {
     public static final String CLIENT_SECRET_POST = "client_secret_post";
     public static final String CLIENT_SECRET_JWT = "client_secret_jwt";
     public static final String PRIVATE_KEY_JWT = "private_key_jwt";
+    public static final String TLS_CLIENT_AUTH = "tls_client_auth";
 
     // https://tools.ietf.org/html/rfc7636#section-4.3
     public static final String CODE_CHALLENGE_PARAM = "code_challenge";
@@ -203,6 +206,11 @@ public class OIDCLoginProtocol implements LoginProtocol {
         String nonce = authSession.getClientNote(OIDCLoginProtocol.NONCE_PARAM);
         clientSessionCtx.setAttribute(OIDCLoginProtocol.NONCE_PARAM, nonce);
 
+        String kcActionStatus = authSession.getClientNote(Constants.KC_ACTION_STATUS);
+        if (kcActionStatus != null) {
+            redirectUri.addParam(Constants.KC_ACTION_STATUS, kcActionStatus);
+        }
+
         // Standard or hybrid flow
         String code = null;
         if (responseType.hasResponseType(OIDCResponseType.CODE)) {
@@ -305,7 +313,7 @@ public class OIDCLoginProtocol implements LoginProtocol {
     @Override
     public void backchannelLogout(UserSessionModel userSession, AuthenticatedClientSessionModel clientSession) {
         ClientModel client = clientSession.getClient();
-        new ResourceAdminManager(session).logoutClientSession(uriInfo.getRequestUri(), realm, client, clientSession);
+        new ResourceAdminManager(session).logoutClientSession(realm, client, clientSession);
     }
 
     @Override
@@ -330,6 +338,8 @@ public class OIDCLoginProtocol implements LoginProtocol {
                 uriBuilder.queryParam(STATE_PARAM, state);
             return Response.status(302).location(uriBuilder.build()).build();
         } else {
+            // TODO Empty content with ok makes no sense. Should it display a page? Or use noContent?
+            session.getProvider(SecurityHeadersProvider.class).options().allowEmptyContentType();
             return Response.ok().build();
         }
     }
@@ -337,7 +347,7 @@ public class OIDCLoginProtocol implements LoginProtocol {
 
     @Override
     public boolean requireReauthentication(UserSessionModel userSession, AuthenticationSessionModel authSession) {
-        return isPromptLogin(authSession) || isAuthTimeExpired(userSession, authSession);
+        return isPromptLogin(authSession) || isAuthTimeExpired(userSession, authSession) || isReAuthRequiredForKcAction(userSession, authSession);
     }
 
     protected boolean isPromptLogin(AuthenticationSessionModel authSession) {
@@ -362,6 +372,17 @@ public class OIDCLoginProtocol implements LoginProtocol {
         }
 
         return false;
+    }
+
+    protected boolean isReAuthRequiredForKcAction(UserSessionModel userSession, AuthenticationSessionModel authSession) {
+        if (authSession.getClientNote(Constants.KC_ACTION) != null) {
+            String authTime = userSession.getNote(AuthenticationManager.AUTH_TIME);
+            int authTimeInt = authTime == null ? 0 : Integer.parseInt(authTime);
+            int maxAgeInt = Constants.KC_ACTION_MAX_AGE;
+            return authTimeInt + maxAgeInt < Time.currentTime();
+        } else {
+            return false;
+        }
     }
 
     @Override

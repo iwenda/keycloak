@@ -22,6 +22,7 @@ import org.keycloak.component.ComponentValidationException;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.LDAPConstants;
 import org.keycloak.models.RealmModel;
+import org.keycloak.models.utils.KeycloakModelUtils;
 import org.keycloak.provider.ProviderConfigProperty;
 import org.keycloak.provider.ProviderConfigurationBuilder;
 import org.keycloak.storage.UserStorageProvider;
@@ -55,7 +56,6 @@ public class GroupLDAPStorageMapperFactory extends AbstractLDAPStorageMapperFact
     protected static final List<String> MEMBERSHIP_TYPES = new LinkedList<>();
     protected static final List<String> MODES = new LinkedList<>();
     protected static final List<String> NO_IMPORT_MODES = new LinkedList<>();
-    protected static final List<String> ROLE_RETRIEVERS;
 
     // TODO: Merge with RoleLDAPFederationMapperFactory as there are lot of similar properties
     static {
@@ -70,7 +70,6 @@ public class GroupLDAPStorageMapperFactory extends AbstractLDAPStorageMapperFact
         }
         NO_IMPORT_MODES.add(LDAPGroupMapperMode.LDAP_ONLY.toString());
         NO_IMPORT_MODES.add(LDAPGroupMapperMode.READ_ONLY.toString());
-        ROLE_RETRIEVERS = new LinkedList<>(userGroupsStrategies.keySet());
 
         List<ProviderConfigProperty> config = getProps(null);
         configProperties = config;
@@ -81,12 +80,14 @@ public class GroupLDAPStorageMapperFactory extends AbstractLDAPStorageMapperFact
         String mode = LDAPGroupMapperMode.LDAP_ONLY.toString();
         String membershipUserAttribute = LDAPConstants.UID;
         boolean importEnabled = true;
+        boolean isActiveDirectory = false;
         if (parent != null) {
             LDAPConfig config = new LDAPConfig(parent.getConfig());
             roleObjectClasses = config.isActiveDirectory() ? LDAPConstants.GROUP : LDAPConstants.GROUP_OF_NAMES;
             mode = config.getEditMode() == UserStorageProvider.EditMode.WRITABLE ? LDAPGroupMapperMode.LDAP_ONLY.toString() : LDAPGroupMapperMode.READ_ONLY.toString();
             membershipUserAttribute = config.getUsernameLdapAttribute();
             importEnabled = new UserStorageProviderModel(parent).isImportEnabled();
+            isActiveDirectory = config.isActiveDirectory();
         }
 
         ProviderConfigurationBuilder config = ProviderConfigurationBuilder.create()
@@ -170,13 +171,22 @@ public class GroupLDAPStorageMapperFactory extends AbstractLDAPStorageMapperFact
                     .add();
 
         }
+
+        List<String> groupRetrievers = new LinkedList<>(userGroupsStrategies.keySet());
+        String groupRetrieversHelpText = "Specify how to retrieve groups of user. LOAD_GROUPS_BY_MEMBER_ATTRIBUTE means that roles of user will be retrieved by sending LDAP query to retrieve all groups where 'member' is our user. " +
+                "GET_GROUPS_FROM_USER_MEMBEROF_ATTRIBUTE means that groups of user will be retrieved from 'memberOf' attribute of our user. Or from the other attribute specified by 'Member-Of LDAP Attribute' . ";
+        if (isActiveDirectory) {
+            groupRetrieversHelpText = groupRetrieversHelpText + "LOAD_GROUPS_BY_MEMBER_ATTRIBUTE_RECURSIVELY is applicable just in Active Directory and it means that groups of user will be retrieved recursively with usage of LDAP_MATCHING_RULE_IN_CHAIN Ldap extension.";
+        } else {
+            // Option should be available just for the Active Directory
+            groupRetrievers.remove(GroupMapperConfig.LOAD_GROUPS_BY_MEMBER_ATTRIBUTE_RECURSIVELY);
+        }
+
         config.property().name(GroupMapperConfig.USER_ROLES_RETRIEVE_STRATEGY)
                 .label("User Groups Retrieve Strategy")
-                .helpText("Specify how to retrieve groups of user. LOAD_GROUPS_BY_MEMBER_ATTRIBUTE means that roles of user will be retrieved by sending LDAP query to retrieve all groups where 'member' is our user. " +
-                        "GET_GROUPS_FROM_USER_MEMBEROF_ATTRIBUTE means that groups of user will be retrieved from 'memberOf' attribute of our user. Or from the other attribute specified by 'Member-Of LDAP Attribute' . " +
-                        "LOAD_GROUPS_BY_MEMBER_ATTRIBUTE_RECURSIVELY is applicable just in Active Directory and it means that groups of user will be retrieved recursively with usage of LDAP_MATCHING_RULE_IN_CHAIN Ldap extension.")
+                .helpText(groupRetrieversHelpText)
                 .type(ProviderConfigProperty.LIST_TYPE)
-                .options(ROLE_RETRIEVERS)
+                .options(groupRetrievers)
                 .defaultValue(GroupMapperConfig.LOAD_GROUPS_BY_MEMBER_ATTRIBUTE)
                 .add()
                 .property().name(GroupMapperConfig.MEMBEROF_LDAP_ATTRIBUTE)
@@ -198,6 +208,15 @@ public class GroupLDAPStorageMapperFactory extends AbstractLDAPStorageMapperFact
                 .helpText("If this flag is true, then during sync of groups from LDAP to Keycloak, we will keep just those Keycloak groups, which still exists in LDAP. Rest will be deleted")
                 .type(ProviderConfigProperty.BOOLEAN_TYPE)
                 .defaultValue("false")
+                .add()
+                .property().name(GroupMapperConfig.LDAP_GROUPS_PATH)
+                .label("Groups Path")
+                .helpText("Keycloak group path the LDAP groups are added to. For example if value '/Applications/App1' is used, "
+                		+ "then LDAP groups will be available in Keycloak under group 'App1', which is child of top level group 'Applications'. "
+                		+ "The default value is '/' so LDAP groups will be mapped to the Keycloak groups at the top level. "
+                		+ "The configured group path must already exists in the Keycloak when creating this mapper.")
+                .type(ProviderConfigProperty.STRING_TYPE)
+                .defaultValue("/")
                 .add();
         return config.build();
     }
@@ -273,6 +292,12 @@ public class GroupLDAPStorageMapperFactory extends AbstractLDAPStorageMapperFact
         }
 
         LDAPUtils.validateCustomLdapFilter(config.getConfig().getFirst(GroupMapperConfig.GROUPS_LDAP_FILTER));
+
+        checkMandatoryConfigAttribute(GroupMapperConfig.LDAP_GROUPS_PATH, "Groups Path", config);
+        String group = config.getConfig().getFirst(GroupMapperConfig.LDAP_GROUPS_PATH).trim();
+        if (!"/".equals(group) && KeycloakModelUtils.findGroupByPath(realm, group) == null) {
+            throw new ComponentValidationException("ldapErrorMissingGroupsPathGroup");
+        }
     }
 
     @Override

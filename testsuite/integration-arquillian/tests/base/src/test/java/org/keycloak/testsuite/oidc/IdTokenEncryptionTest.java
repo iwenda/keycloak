@@ -16,14 +16,7 @@
  */
 package org.keycloak.testsuite.oidc;
 
-import java.io.UnsupportedEncodingException;
-import java.security.PrivateKey;
-import java.util.List;
-import java.util.Map;
-
-import org.jboss.arquillian.container.test.api.Deployment;
 import org.jboss.arquillian.graphene.page.Page;
-import org.jboss.shrinkwrap.api.spec.WebArchive;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -55,12 +48,16 @@ import org.keycloak.testsuite.pages.AppPage;
 import org.keycloak.testsuite.pages.ErrorPage;
 import org.keycloak.testsuite.pages.LoginPage;
 import org.keycloak.testsuite.pages.OAuthGrantPage;
-import org.keycloak.testsuite.runonserver.RunOnServerDeployment;
 import org.keycloak.testsuite.util.ClientManager;
 import org.keycloak.testsuite.util.OAuthClient;
 import org.keycloak.testsuite.util.OAuthClient.AccessTokenResponse;
 import org.keycloak.testsuite.util.TokenSignatureUtil;
 import org.keycloak.util.TokenUtil;
+
+import java.io.UnsupportedEncodingException;
+import java.security.PrivateKey;
+import java.util.List;
+import java.util.Map;
 
 public class IdTokenEncryptionTest extends AbstractTestRealmKeycloakTest {
 
@@ -81,11 +78,6 @@ public class IdTokenEncryptionTest extends AbstractTestRealmKeycloakTest {
 
     @Page
     protected ErrorPage errorPage;
-
-    @Deployment
-    public static WebArchive deploy() {
-        return RunOnServerDeployment.create(OIDCAdvancedRequestParamsTest.class, AbstractTestRealmKeycloakTest.class);
-    }
 
     @Override
     public void configureTestRealm(RealmRepresentation testRealm) {
@@ -118,8 +110,28 @@ public class IdTokenEncryptionTest extends AbstractTestRealmKeycloakTest {
     }
 
     @Test
+    public void testIdTokenEncryptionAlgRSA1_5EncA192CBC_HS384() {
+        testIdTokenSignatureAndEncryption(Algorithm.PS256, JWEConstants.RSA1_5, JWEConstants.A192CBC_HS384);
+    }
+
+    @Test
+    public void testIdTokenEncryptionAlgRSA1_5EncA256CBC_HS512() {
+        testIdTokenSignatureAndEncryption(Algorithm.PS384, JWEConstants.RSA1_5, JWEConstants.A256CBC_HS512);
+    }
+
+    @Test
     public void testIdTokenEncryptionAlgRSA1_5EncA128GCM() {
         testIdTokenSignatureAndEncryption(Algorithm.RS384, JWEConstants.RSA1_5, JWEConstants.A128GCM);
+    }
+
+    @Test
+    public void testIdTokenEncryptionAlgRSA1_5EncA192GCM() {
+        testIdTokenSignatureAndEncryption(Algorithm.RS512, JWEConstants.RSA1_5, JWEConstants.A192GCM);
+    }
+
+    @Test
+    public void testIdTokenEncryptionAlgRSA1_5EncA256GCM() {
+        testIdTokenSignatureAndEncryption(Algorithm.RS256, JWEConstants.RSA1_5, JWEConstants.A256GCM);
     }
 
     @Test
@@ -130,10 +142,30 @@ public class IdTokenEncryptionTest extends AbstractTestRealmKeycloakTest {
     }
 
     @Test
+    public void testIdTokenEncryptionAlgRSA_OAEPEncA192CBC_HS384() {
+        testIdTokenSignatureAndEncryption(Algorithm.PS256, JWEConstants.RSA_OAEP, JWEConstants.A192CBC_HS384);
+    }
+
+    @Test
+    public void testIdTokenEncryptionAlgRSA_OAEPEncA256CBC_HS512() {
+        testIdTokenSignatureAndEncryption(Algorithm.PS512, JWEConstants.RSA_OAEP, JWEConstants.A256CBC_HS512);
+    }
+
+    @Test
     public void testIdTokenEncryptionAlgRSA_OAEPEncA128GCM() {
         // add key provider explicitly though DefaultKeyManager create fallback key provider if not exist
         TokenSignatureUtil.registerKeyProvider("P-256", adminClient, testContext);
         testIdTokenSignatureAndEncryption(Algorithm.ES256, JWEConstants.RSA_OAEP, JWEConstants.A128GCM);
+    }
+
+    @Test
+    public void testIdTokenEncryptionAlgRSA_OAEPEncA192GCM() {
+        testIdTokenSignatureAndEncryption(Algorithm.PS384, JWEConstants.RSA_OAEP, JWEConstants.A192GCM);
+    }
+
+    @Test
+    public void testIdTokenEncryptionAlgRSA_OAEPEncA256GCM() {
+        testIdTokenSignatureAndEncryption(Algorithm.PS512, JWEConstants.RSA_OAEP, JWEConstants.A256GCM);
     }
 
     private void testIdTokenSignatureAndEncryption(String sigAlgorithm, String algAlgorithm, String encAlgorithm) {
@@ -206,10 +238,17 @@ public class IdTokenEncryptionTest extends AbstractTestRealmKeycloakTest {
     }
     private JWEEncryptionProvider getJweEncryptionProvider(String encAlgorithm) {
         JWEEncryptionProvider jweEncryptionProvider = null;
-        if (JWEConstants.A128CBC_HS256.equals(encAlgorithm)) {
-            jweEncryptionProvider = new AesCbcHmacShaContentEncryptionProvider(null, encAlgorithm).jweEncryptionProvider();
-        } else if (JWEConstants.A128GCM.equals(encAlgorithm)) {
-            jweEncryptionProvider = new AesGcmContentEncryptionProvider(null, encAlgorithm).jweEncryptionProvider();
+        switch(encAlgorithm) {
+            case JWEConstants.A128GCM:
+            case JWEConstants.A192GCM:
+            case JWEConstants.A256GCM:
+                jweEncryptionProvider = new AesGcmContentEncryptionProvider(null, encAlgorithm).jweEncryptionProvider();
+                break;
+            case JWEConstants.A128CBC_HS256:
+            case JWEConstants.A192CBC_HS384:
+            case JWEConstants.A256CBC_HS512:
+                jweEncryptionProvider = new AesCbcHmacShaContentEncryptionProvider(null, encAlgorithm).jweEncryptionProvider();
+                break;
         }
         return jweEncryptionProvider;
     }

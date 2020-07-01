@@ -18,11 +18,9 @@ package org.keycloak.testsuite.adapter.servlet;
 
 import org.jboss.arquillian.container.test.api.Deployment;
 import org.jboss.arquillian.container.test.api.OperateOnDeployment;
-import org.jboss.arquillian.container.test.api.TargetsContainer;
 import org.jboss.arquillian.graphene.page.Page;
 import org.jboss.arquillian.test.api.ArquillianResource;
 import org.jboss.shrinkwrap.api.spec.WebArchive;
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -54,22 +52,21 @@ import org.keycloak.representations.idm.authorization.ClientPolicyRepresentation
 import org.keycloak.representations.idm.authorization.DecisionStrategy;
 import org.keycloak.services.resources.admin.permissions.AdminPermissionManagement;
 import org.keycloak.services.resources.admin.permissions.AdminPermissions;
-import org.keycloak.testsuite.AbstractAuthTest;
-import org.keycloak.testsuite.ProfileAssume;
-import org.keycloak.testsuite.adapter.AbstractAdapterTest;
 import org.keycloak.testsuite.adapter.AbstractServletsAdapterTest;
 import org.keycloak.testsuite.arquillian.annotation.AppServerContainer;
+import org.keycloak.testsuite.arquillian.annotation.DisableFeature;
+import org.keycloak.testsuite.arquillian.annotation.EnableFeature;
 import org.keycloak.testsuite.arquillian.annotation.UncaughtServerErrorExpected;
-import org.keycloak.testsuite.utils.arquillian.ContainerConstants;
 import org.keycloak.testsuite.broker.BrokerTestTools;
 import org.keycloak.testsuite.page.AbstractPageWithInjectedUrl;
 import org.keycloak.testsuite.pages.AccountUpdateProfilePage;
 import org.keycloak.testsuite.pages.ErrorPage;
 import org.keycloak.testsuite.pages.LoginPage;
 import org.keycloak.testsuite.pages.LoginUpdateProfilePage;
-import org.keycloak.testsuite.runonserver.RunOnServerDeployment;
+import org.keycloak.testsuite.util.ContainerAssume;
 import org.keycloak.testsuite.util.OAuthClient;
 import org.keycloak.testsuite.util.WaitUtils;
+import org.keycloak.testsuite.utils.arquillian.ContainerConstants;
 import org.keycloak.util.BasicAuthHelper;
 
 import javax.ws.rs.client.Client;
@@ -85,9 +82,7 @@ import java.net.URL;
 import java.util.LinkedList;
 import java.util.List;
 
-import static org.keycloak.testsuite.Assert.assertEquals;
 import static org.keycloak.testsuite.admin.ApiUtil.createUserAndResetPasswordWithAdminClient;
-import static org.keycloak.testsuite.arquillian.DeploymentTargetModifier.AUTH_SERVER_CURRENT;
 
 /**
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
@@ -99,6 +94,7 @@ import static org.keycloak.testsuite.arquillian.DeploymentTargetModifier.AUTH_SE
 @AppServerContainer(ContainerConstants.APP_SERVER_EAP)
 @AppServerContainer(ContainerConstants.APP_SERVER_EAP6)
 @AppServerContainer(ContainerConstants.APP_SERVER_EAP71)
+@EnableFeature(value = Profile.Feature.TOKEN_EXCHANGE, skipRestart = true)
 public class BrokerLinkAndTokenExchangeTest extends AbstractServletsAdapterTest {
     public static final String CHILD_IDP = "child";
     public static final String PARENT_IDP = "parent-idp";
@@ -106,15 +102,6 @@ public class BrokerLinkAndTokenExchangeTest extends AbstractServletsAdapterTest 
     public static final String PARENT2_USERNAME = "parent2";
     public static final String UNAUTHORIZED_CHILD_CLIENT = "unauthorized-child-client";
     public static final String PARENT_CLIENT = "parent-client";
-
-    @Deployment
-    @TargetsContainer(AUTH_SERVER_CURRENT)
-    public static WebArchive deploy() {
-        return RunOnServerDeployment.create(BrokerLinkAndTokenExchangeTest.class,
-                AbstractServletsAdapterTest.class,
-                AbstractAdapterTest.class,
-                AbstractAuthTest.class);
-    }
 
     @Deployment(name = ClientApp.DEPLOYMENT_NAME)
     protected static WebArchive accountLink() {
@@ -205,30 +192,23 @@ public class BrokerLinkAndTokenExchangeTest extends AbstractServletsAdapterTest 
 
     }
 
-    @Before
-    public void enableFeature() throws Exception {
-        try {
-            addIdpUser();
-            addChildUser();
-            createBroker();
-
-            checkFeature(Response.Status.NOT_IMPLEMENTED.getStatusCode());
-            Response response = testingClient.testing().enableFeature(Profile.Feature.TOKEN_EXCHANGE.toString());
-            assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
-            checkFeature(Response.Status.OK.getStatusCode());
-
-            ProfileAssume.assumeFeatureEnabled(Profile.Feature.TOKEN_EXCHANGE);
-        } catch (Exception e) {
-            disableFeature();
-            throw e;
-        }
+    @Test
+    @DisableFeature(value = Profile.Feature.TOKEN_EXCHANGE, skipRestart = true)
+    @UncaughtServerErrorExpected
+    public void testFeatureDisabled() throws Exception {
+        checkFeature(Response.Status.NOT_IMPLEMENTED.getStatusCode());
     }
 
-    @After
-    public void disableFeature() throws Exception {
-        Response response = testingClient.testing().disableFeature(Profile.Feature.TOKEN_EXCHANGE.toString());
-        assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
-        checkFeature(Response.Status.NOT_IMPLEMENTED.getStatusCode());
+    @Test
+    public void testFeatureEnabled() throws Exception {
+        checkFeature(Response.Status.OK.getStatusCode());
+    }
+
+    @Before
+    public void beforeTest() throws Exception {
+        addIdpUser();
+        addChildUser();
+        createBroker();
     }
 
     public void addIdpUser() {
@@ -332,7 +312,7 @@ public class BrokerLinkAndTokenExchangeTest extends AbstractServletsAdapterTest 
     }
 
     public void createParentChild() {
-        BrokerTestTools.createKcOidcBroker(adminClient, CHILD_IDP, PARENT_IDP, suiteContext);
+        BrokerTestTools.createKcOidcBroker(adminClient, CHILD_IDP, PARENT_IDP);
     }
 
 
@@ -510,6 +490,9 @@ public class BrokerLinkAndTokenExchangeTest extends AbstractServletsAdapterTest 
     @Test
     @UncaughtServerErrorExpected
     public void testExportImport() throws Exception {
+        ContainerAssume.assumeNotAuthServerRemote();
+        ContainerAssume.assumeNotAuthServerQuarkus();
+
         testExternalExchange();
         testingClient.testing().exportImport().setProvider(SingleFileExportProviderFactory.PROVIDER_ID);
         String targetFilePath = testingClient.testing().exportImport().getExportImportTestDirectory() + File.separator + "singleFile-full.json";
@@ -567,11 +550,12 @@ public class BrokerLinkAndTokenExchangeTest extends AbstractServletsAdapterTest 
                                         .param(OAuth2Constants.SUBJECT_TOKEN, accessToken)
                                         .param(OAuth2Constants.SUBJECT_TOKEN_TYPE, OAuth2Constants.JWT_TOKEN_TYPE)
                                         .param(OAuth2Constants.SUBJECT_ISSUER, PARENT_IDP)
+                                        .param(OAuth2Constants.SCOPE, OAuth2Constants.SCOPE_OPENID)
 
                         ));
                 Assert.assertEquals(200, response.getStatus());
                 AccessTokenResponse tokenResponse = response.readEntity(AccessTokenResponse.class);
-                String exchangedAccessToken = tokenResponse.getToken();
+                String idToken = tokenResponse.getIdToken();
                 JWSInput jws = new JWSInput(tokenResponse.getToken());
                 AccessToken token = jws.readJsonContent(AccessToken.class);
                 response.close();
@@ -603,7 +587,7 @@ public class BrokerLinkAndTokenExchangeTest extends AbstractServletsAdapterTest 
 
                 // test logout
                 response = childLogoutWebTarget(httpClient)
-                        .queryParam("id_token_hint", exchangedAccessToken)
+                        .queryParam("id_token_hint", idToken)
                         .request()
                         .get();
                 response.close();
@@ -624,11 +608,12 @@ public class BrokerLinkAndTokenExchangeTest extends AbstractServletsAdapterTest 
                                         .param(OAuth2Constants.SUBJECT_TOKEN, accessToken)
                                         .param(OAuth2Constants.SUBJECT_TOKEN_TYPE, OAuth2Constants.JWT_TOKEN_TYPE)
                                         .param(OAuth2Constants.SUBJECT_ISSUER, PARENT_IDP)
+                                        .param(OAuth2Constants.SCOPE, OAuth2Constants.SCOPE_OPENID)
 
                         ));
                 Assert.assertEquals(200, response.getStatus());
                 AccessTokenResponse tokenResponse = response.readEntity(AccessTokenResponse.class);
-                String exchangedAccessToken = tokenResponse.getToken();
+                String idToken = tokenResponse.getIdToken();
                 JWSInput jws = new JWSInput(tokenResponse.getToken());
                 AccessToken token = jws.readJsonContent(AccessToken.class);
                 response.close();
@@ -643,7 +628,7 @@ public class BrokerLinkAndTokenExchangeTest extends AbstractServletsAdapterTest 
 
                 // test logout
                 response = childLogoutWebTarget(httpClient)
-                        .queryParam("id_token_hint", exchangedAccessToken)
+                        .queryParam("id_token_hint", idToken)
                         .request()
                         .get();
                 response.close();
@@ -663,11 +648,12 @@ public class BrokerLinkAndTokenExchangeTest extends AbstractServletsAdapterTest 
                                         .param(OAuth2Constants.GRANT_TYPE, OAuth2Constants.TOKEN_EXCHANGE_GRANT_TYPE)
                                         .param(OAuth2Constants.SUBJECT_TOKEN, accessToken)
                                         .param(OAuth2Constants.SUBJECT_TOKEN_TYPE, OAuth2Constants.JWT_TOKEN_TYPE)
+                                        .param(OAuth2Constants.SCOPE, OAuth2Constants.SCOPE_OPENID)
 
                         ));
                 Assert.assertEquals(200, response.getStatus());
                 AccessTokenResponse tokenResponse = response.readEntity(AccessTokenResponse.class);
-                String exchangedAccessToken = tokenResponse.getToken();
+                String idToken = tokenResponse.getIdToken();
                 JWSInput jws = new JWSInput(tokenResponse.getToken());
                 AccessToken token = jws.readJsonContent(AccessToken.class);
                 response.close();
@@ -682,7 +668,7 @@ public class BrokerLinkAndTokenExchangeTest extends AbstractServletsAdapterTest 
 
                 // test logout
                 response = childLogoutWebTarget(httpClient)
-                        .queryParam("id_token_hint", exchangedAccessToken)
+                        .queryParam("id_token_hint", idToken)
                         .request()
                         .get();
                 response.close();
@@ -751,21 +737,22 @@ public class BrokerLinkAndTokenExchangeTest extends AbstractServletsAdapterTest 
                                         .param(OAuth2Constants.SUBJECT_TOKEN, accessToken)
                                         .param(OAuth2Constants.SUBJECT_TOKEN_TYPE, OAuth2Constants.JWT_TOKEN_TYPE)
                                         .param(OAuth2Constants.SUBJECT_ISSUER, PARENT_IDP)
+                                        .param(OAuth2Constants.SCOPE, OAuth2Constants.SCOPE_OPENID)
 
                         ));
                 Assert.assertEquals(statusCode, response.getStatus());
 
                 if (statusCode != Response.Status.NOT_IMPLEMENTED.getStatusCode()) {
                     AccessTokenResponse tokenResponse = response.readEntity(AccessTokenResponse.class);
-                    String exchangedAccessToken = tokenResponse.getToken();
-                    Assert.assertNotNull(exchangedAccessToken);
+                    String idToken = tokenResponse.getIdToken();
+                    Assert.assertNotNull(idToken);
                     response.close();
 
                     Assert.assertEquals(1, adminClient.realm(CHILD_IDP).getClientSessionStats().size());
 
                     // test logout
                     response = childLogoutWebTarget(httpClient)
-                            .queryParam("id_token_hint", exchangedAccessToken)
+                            .queryParam("id_token_hint", idToken)
                             .request()
                             .get();
                     response.close();

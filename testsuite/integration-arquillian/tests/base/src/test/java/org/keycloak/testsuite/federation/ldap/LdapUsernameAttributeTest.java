@@ -17,21 +17,16 @@
 
 package org.keycloak.testsuite.federation.ldap;
 
-import org.jboss.arquillian.container.test.api.Deployment;
-import org.jboss.arquillian.container.test.api.TargetsContainer;
-import org.jboss.shrinkwrap.api.spec.WebArchive;
 import org.junit.Assert;
 import org.junit.ClassRule;
 import org.junit.FixMethodOrder;
 import org.junit.Test;
 import org.junit.runners.MethodSorters;
-import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.models.ModelDuplicateException;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
+import org.keycloak.storage.ldap.idm.model.LDAPDn;
 import org.keycloak.storage.ldap.idm.model.LDAPObject;
-import static org.keycloak.testsuite.arquillian.DeploymentTargetModifier.AUTH_SERVER_CURRENT;
-import org.keycloak.testsuite.runonserver.RunOnServerDeployment;
 import org.keycloak.testsuite.runonserver.RunOnServerException;
 import org.keycloak.testsuite.util.LDAPRule;
 
@@ -44,15 +39,6 @@ public class LdapUsernameAttributeTest extends AbstractLDAPTest {
 
     @ClassRule
     public static LDAPRule ldapRule = new LDAPRule();
-
-    @Deployment
-    @TargetsContainer(AUTH_SERVER_CURRENT)
-    public static WebArchive deploy() {
-        return RunOnServerDeployment.create(UserResource.class, AbstractLDAPTest.class)
-                .addPackages(true,
-                        "org.keycloak.testsuite",
-                        "org.keycloak.testsuite.federation.ldap");
-    }
 
     @Override
     protected LDAPRule getLDAPRule() {
@@ -92,7 +78,8 @@ public class LdapUsernameAttributeTest extends AbstractLDAPTest {
             Assert.assertEquals("johndow", john.getLastName());
             LDAPObject johnLdap = ctx.getLdapProvider().loadLDAPUserByUsername(appRealm, "johndow");
             Assert.assertNotNull(johnLdap);
-            Assert.assertEquals("johndow", johnLdap.getDn().getFirstRdnAttrValue());
+            LDAPDn.RDN firstRdnEntry = johnLdap.getDn().getFirstRdn();
+            Assert.assertEquals("johndow", firstRdnEntry.getAttrValue(firstRdnEntry.getAllKeys().get(0)));
         });
         // rename to johndow2
         testingClient.server().run(session -> {
@@ -118,7 +105,8 @@ public class LdapUsernameAttributeTest extends AbstractLDAPTest {
             Assert.assertEquals("johndow2", john2.getLastName());
             LDAPObject johnLdap2 = ctx.getLdapProvider().loadLDAPUserByUsername(appRealm, "johndow2");
             Assert.assertNotNull(johnLdap2);
-            Assert.assertEquals("johndow2", johnLdap2.getDn().getFirstRdnAttrValue());
+            LDAPDn.RDN firstRdnEntry = johnLdap2.getDn().getFirstRdn();
+            Assert.assertEquals("johndow2", firstRdnEntry.getAttrValue(firstRdnEntry.getAllKeys().get(0)));
 
             session.users().removeUser(appRealm, john2);
             Assert.assertNull(session.users().getUserByUsername("johndow2", appRealm));

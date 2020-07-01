@@ -28,6 +28,7 @@ import org.keycloak.admin.client.resource.AuthorizationResource;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.models.AdminRoles;
 import org.keycloak.models.Constants;
+import org.keycloak.models.credential.OTPCredentialModel;
 import org.keycloak.representations.KeyStoreConfig;
 import org.keycloak.representations.idm.AuthenticationExecutionInfoRepresentation;
 import org.keycloak.representations.idm.AuthenticationExecutionRepresentation;
@@ -37,7 +38,7 @@ import org.keycloak.representations.idm.ClientInitialAccessCreatePresentation;
 import org.keycloak.representations.idm.ClientRepresentation;
 import org.keycloak.representations.idm.ClientScopeRepresentation;
 import org.keycloak.representations.idm.ComponentRepresentation;
-import org.keycloak.representations.idm.ConfigPropertyRepresentation;
+import org.keycloak.representations.idm.CredentialRepresentation;
 import org.keycloak.representations.idm.GroupRepresentation;
 import org.keycloak.representations.idm.IdentityProviderMapperRepresentation;
 import org.keycloak.representations.idm.IdentityProviderRepresentation;
@@ -50,13 +51,13 @@ import org.keycloak.representations.idm.RequiredActionProviderSimpleRepresentati
 import org.keycloak.representations.idm.RoleRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.representations.idm.authorization.PolicyRepresentation;
+import org.keycloak.representations.idm.authorization.ResourcePermissionRepresentation;
 import org.keycloak.representations.idm.authorization.ResourceRepresentation;
 import org.keycloak.representations.idm.authorization.ResourceServerRepresentation;
 import org.keycloak.representations.idm.authorization.ScopeRepresentation;
 import org.keycloak.services.resources.admin.AdminAuth.Resource;
 import org.keycloak.testsuite.AbstractKeycloakTest;
 import org.keycloak.testsuite.Assert;
-import org.keycloak.testsuite.arquillian.AuthServerTestEnricher;
 import org.keycloak.testsuite.util.AdminClientUtil;
 import org.keycloak.testsuite.util.ClientBuilder;
 import org.keycloak.testsuite.util.CredentialBuilder;
@@ -81,7 +82,8 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.fail;
 import static org.keycloak.services.resources.admin.AdminAuth.Resource.AUTHORIZATION;
 import static org.keycloak.services.resources.admin.AdminAuth.Resource.CLIENT;
-import org.keycloak.testsuite.ProfileAssume;
+import static org.keycloak.testsuite.util.ServerURLs.getAuthServerContextRoot;
+
 import org.keycloak.testsuite.utils.tls.TLSUtils;
 
 /**
@@ -194,31 +196,31 @@ public class PermissionsTest extends AbstractKeycloakTest {
         super.beforeAbstractKeycloakTest();
 
         clients.put(AdminRoles.REALM_ADMIN,
-                Keycloak.getInstance(AuthServerTestEnricher.getAuthServerContextRoot() + "/auth", REALM_NAME, AdminRoles.REALM_ADMIN, "password", "test-client",
+                Keycloak.getInstance(getAuthServerContextRoot() + "/auth", REALM_NAME, AdminRoles.REALM_ADMIN, "password", "test-client",
                         "secret", TLSUtils.initializeTLS()));
 
         clients.put("none",
-                Keycloak.getInstance(AuthServerTestEnricher.getAuthServerContextRoot() + "/auth", REALM_NAME, "none", "password", "test-client", "secret", TLSUtils.initializeTLS()));
+                Keycloak.getInstance(getAuthServerContextRoot() + "/auth", REALM_NAME, "none", "password", "test-client", "secret", TLSUtils.initializeTLS()));
 
         clients.put("multi",
-                Keycloak.getInstance(AuthServerTestEnricher.getAuthServerContextRoot() + "/auth", REALM_NAME, "multi", "password", "test-client", "secret", TLSUtils.initializeTLS()));
+                Keycloak.getInstance(getAuthServerContextRoot() + "/auth", REALM_NAME, "multi", "password", "test-client", "secret", TLSUtils.initializeTLS()));
 
         for (String role : AdminRoles.ALL_REALM_ROLES) {
-            clients.put(role, Keycloak.getInstance(AuthServerTestEnricher.getAuthServerContextRoot() + "/auth", REALM_NAME, role, "password", "test-client", TLSUtils.initializeTLS()));
+            clients.put(role, Keycloak.getInstance(getAuthServerContextRoot() + "/auth", REALM_NAME, role, "password", "test-client", TLSUtils.initializeTLS()));
         }
 
-        clients.put("REALM2", Keycloak.getInstance(AuthServerTestEnricher.getAuthServerContextRoot() + "/auth", "realm2", "admin", "password", "test-client", TLSUtils.initializeTLS()));
+        clients.put("REALM2", Keycloak.getInstance(getAuthServerContextRoot() + "/auth", "realm2", "admin", "password", "test-client", TLSUtils.initializeTLS()));
 
         clients.put("master-admin", adminClient);
 
         clients.put("master-none",
-                Keycloak.getInstance(AuthServerTestEnricher.getAuthServerContextRoot() + "/auth", "master", "permissions-test-master-none", "password",
+                Keycloak.getInstance(getAuthServerContextRoot() + "/auth", "master", "permissions-test-master-none", "password",
                         Constants.ADMIN_CLI_CLIENT_ID, TLSUtils.initializeTLS()));
 
 
         for (String role : AdminRoles.ALL_REALM_ROLES) {
             clients.put("master-" + role,
-                    Keycloak.getInstance(AuthServerTestEnricher.getAuthServerContextRoot() + "/auth", "master", "permissions-test-master-" + role, "password",
+                    Keycloak.getInstance(getAuthServerContextRoot() + "/auth", "master", "permissions-test-master-" + role, "password",
                             Constants.ADMIN_CLI_CLIENT_ID, TLSUtils.initializeTLS()));
         }
     }
@@ -957,13 +959,10 @@ public class PermissionsTest extends AbstractKeycloakTest {
         invoke(new InvocationWithResponse() {
             public void invoke(RealmResource realm, AtomicReference<Response> response) {
                 AuthorizationResource authorization = realm.clients().get(foo.getId()).authorization();
-                PolicyRepresentation representation = new PolicyRepresentation();
+                ResourcePermissionRepresentation representation = new ResourcePermissionRepresentation();
                 representation.setName("Test PermissionsTest");
-                representation.setType("js");
-                HashMap<String, String> config = new HashMap<>();
-                config.put("code", "");
-                representation.setConfig(config);
-                response.set(authorization.policies().create(representation));
+                representation.addResource("Default Resource");
+                response.set(authorization.permissions().resource().create(representation));
             }
         }, AUTHORIZATION, true);
         invoke(new Invocation() {
@@ -1148,7 +1147,7 @@ public class PermissionsTest extends AbstractKeycloakTest {
             public void invoke(RealmResource realm, AtomicReference<Response> response) {
                 AuthenticationExecutionRepresentation rep = new AuthenticationExecutionRepresentation();
                 rep.setAuthenticator("auth-cookie");
-                rep.setRequirement("OPTIONAL");
+                rep.setRequirement("CONDITIONAL");
                 response.set(realm.flows().addExecution(rep));
             }
         }, Resource.REALM, true);
@@ -1501,7 +1500,13 @@ public class PermissionsTest extends AbstractKeycloakTest {
         }, Resource.USER, true);
         invoke(new Invocation() {
             public void invoke(RealmResource realm) {
-                realm.users().get(user.getId()).removeTotp();
+                CredentialRepresentation totpCredential = realm.users().get(user.getId()).credentials().stream()
+                        .filter(c -> OTPCredentialModel.TYPE.equals(c.getType())).findFirst().orElse(null);
+                if (totpCredential != null) {
+                    realm.users().get(user.getId()).removeCredential(totpCredential.getId());
+                } else {
+                    realm.users().get(user.getId()).removeCredential("123");
+                }
             }
         }, Resource.USER, true);
         invoke(new Invocation() {
@@ -1653,8 +1658,8 @@ public class PermissionsTest extends AbstractKeycloakTest {
         }, Resource.IDENTITY_PROVIDER, false);
         invoke(new InvocationWithResponse() {
             public void invoke(RealmResource realm, AtomicReference<Response> response) {
-                response.set(realm.identityProviders().create(IdentityProviderBuilder.create().providerId("nosuch")
-                        .displayName("nosuch-foo").alias("foo").build()));
+                response.set(realm.identityProviders().create(IdentityProviderBuilder.create().providerId("oidc")
+                        .displayName("nosuch-foo").alias("foo").setAttribute("clientId", "foo").setAttribute("clientSecret", "foo").build()));
             }
         }, Resource.IDENTITY_PROVIDER, true);
 

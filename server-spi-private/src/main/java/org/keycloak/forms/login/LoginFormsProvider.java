@@ -17,6 +17,7 @@
 
 package org.keycloak.forms.login;
 
+import org.keycloak.authentication.AuthenticationFlowContext;
 import org.keycloak.models.ClientScopeModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.utils.FormMessage;
@@ -39,6 +40,8 @@ public interface LoginFormsProvider extends Provider {
 
     String USERNAME_EDIT_DISABLED = "usernameEditDisabled";
 
+    String REGISTRATION_DISABLED = "registrationDisabled";
+
 
     /**
      * Adds a script to the html header
@@ -55,11 +58,17 @@ public interface LoginFormsProvider extends Provider {
 
     String getMessage(String message, String... parameters);
 
-    Response createLogin();
+    Response createLoginUsernamePassword();
+
+    Response createLoginUsername();
+
+    Response createLoginPassword();
 
     Response createPasswordReset();
 
     Response createLoginTotp();
+
+    Response createLoginWebAuthn();
 
     Response createRegistration();
 
@@ -75,7 +84,11 @@ public interface LoginFormsProvider extends Provider {
 
     Response createErrorPage(Response.Status status);
 
+    Response createWebAuthnErrorPage();
+
     Response createOAuthGrant();
+
+    Response createSelectAuthenticator();
 
     Response createCode();
 
@@ -133,4 +146,6 @@ public interface LoginFormsProvider extends Provider {
     LoginFormsProvider setActionUri(URI requestUri);
 
     LoginFormsProvider setExecution(String execution);
+
+    LoginFormsProvider setAuthContext(AuthenticationFlowContext context);
 }

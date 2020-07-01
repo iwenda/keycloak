@@ -6,10 +6,13 @@ import org.keycloak.testsuite.util.WaitUtils;
 import org.openqa.selenium.By;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.WebDriver;
+import org.openqa.selenium.WebDriverException;
 import org.openqa.selenium.WebElement;
 
 import java.util.concurrent.TimeUnit;
 
+import static org.junit.Assert.fail;
+import static org.keycloak.testsuite.util.WaitUtils.pause;
 import static org.keycloak.testsuite.util.WaitUtils.waitForPageToLoad;
 
 
@@ -101,6 +104,11 @@ public class JavascriptTestExecutor {
     }
 
     public JavascriptTestExecutor configure(JSObjectBuilder argumentsBuilder) {
+        // a nasty hack: redirect console.warn to events
+        // mainly for FF as it doesn't yet support reading console.warn directly through webdriver
+        // see https://github.com/mozilla/geckodriver/issues/284
+        jsExecutor.executeScript("console.warn = event;");
+
         if (argumentsBuilder == null) {
             jsExecutor.executeScript("window.keycloak = Keycloak();");
         } else {
@@ -114,6 +122,7 @@ public class JavascriptTestExecutor {
         jsExecutor.executeScript("window.keycloak.onAuthRefreshError = function () {event('Auth Refresh Error')}");
         jsExecutor.executeScript("window.keycloak.onAuthLogout = function () {event('Auth Logout')}");
         jsExecutor.executeScript("window.keycloak.onTokenExpired = function () {event('Access token expired.')}");
+        jsExecutor.executeScript("window.keycloak.onActionUpdate = function (status) {event('AIA status: ' + status)}");
 
         configured = true;
 
@@ -125,33 +134,40 @@ public class JavascriptTestExecutor {
     }
 
     public JavascriptTestExecutor init(JSObjectBuilder argumentsBuilder, JavascriptStateValidator validator) {
+        return init(argumentsBuilder, validator, false);
+    }
+
+    public JavascriptTestExecutor init(JSObjectBuilder argumentsBuilder, JavascriptStateValidator validator, boolean expectPromptNoneRedirect) {
         if(!configured) {
             configure();
         }
 
         String arguments = argumentsBuilder.build();
 
-        String script;
+        String script = "var callback = arguments[arguments.length - 1];" +
+                "   window.keycloak.init(" + arguments + ").then(function (authenticated) {" +
+                "       callback(\"Init Success (\" + (authenticated ? \"Authenticated\" : \"Not Authenticated\") + \")\");" +
+                "   }).catch(function () {" +
+                "       callback(\"Init Error\");" +
+                "   });";
 
-        // phantomjs do not support Native promises
-        if (argumentsBuilder.contains("promiseType", "native") && !"phantomjs".equals(System.getProperty("js.browser"))) {
-            script = "var callback = arguments[arguments.length - 1];" +
-                    "   window.keycloak.init(" + arguments + ").then(function (authenticated) {" +
-                    "       callback(\"Init Success (\" + (authenticated ? \"Authenticated\" : \"Not Authenticated\") + \")\");" +
-                    "   }, function () {" +
-                    "       callback(\"Init Error\");" +
-                    "   });";
-        } else {
-            script = "var callback = arguments[arguments.length - 1];" +
-                    "   window.keycloak.init(" + arguments + ").success(function (authenticated) {" +
-                    "       callback(\"Init Success (\" + (authenticated ? \"Authenticated\" : \"Not Authenticated\") + \")\");" +
-                    "   }).error(function () {" +
-                    "       callback(\"Init Error\");" +
-                    "   });";
+        Object output;
+
+        if (expectPromptNoneRedirect) {
+            try {
+                output = jsExecutor.executeAsyncScript(script);
+                fail("Redirect to Keycloak was expected");
+            }
+            catch (WebDriverException e) {
+                waitForPageToLoad();
+                configured = false;
+                // the redirect should use prompt=none, that means KC should immediately redirect back to the app (regardless login state)
+                return init(argumentsBuilder, validator, false);
+            }
         }
-
-
-        Object output = jsExecutor.executeAsyncScript(script);
+        else {
+            output = jsExecutor.executeAsyncScript(script);
+        }
 
         if (validator != null) {
             validator.validate(jsDriver, output, events);
@@ -174,30 +190,16 @@ public class JavascriptTestExecutor {
     }
 
     public JavascriptTestExecutor refreshToken(int value, JavascriptStateValidator validator) {
-        String script;
-        if (useNativePromises()) {
-            script = "var callback = arguments[arguments.length - 1];" +
-                    "   window.keycloak.updateToken(" + Integer.toString(value) + ").then(function (refreshed) {" +
-                    "       if (refreshed) {" +
-                    "            callback(window.keycloak.tokenParsed);" +
-                    "       } else {" +
-                    "            callback('Token not refreshed, valid for ' + Math.round(window.keycloak.tokenParsed.exp + window.keycloak.timeSkew - new Date().getTime() / 1000) + ' seconds');" +
-                    "       }" +
-                    "   }, function () {" +
-                    "       callback('Failed to refresh token');" +
-                    "   });";
-        } else {
-            script = "var callback = arguments[arguments.length - 1];" +
-                    "   window.keycloak.updateToken(" + Integer.toString(value) + ").success(function (refreshed) {" +
-                    "       if (refreshed) {" +
-                    "            callback(window.keycloak.tokenParsed);" +
-                    "       } else {" +
-                    "            callback('Token not refreshed, valid for ' + Math.round(window.keycloak.tokenParsed.exp + window.keycloak.timeSkew - new Date().getTime() / 1000) + ' seconds');" +
-                    "       }" +
-                    "   }).error(function () {" +
-                    "       callback('Failed to refresh token');" +
-                    "   });";
-        }
+        String script = "var callback = arguments[arguments.length - 1];" +
+                "   window.keycloak.updateToken(" + Integer.toString(value) + ").then(function (refreshed) {" +
+                "       if (refreshed) {" +
+                "            callback(window.keycloak.tokenParsed);" +
+                "       } else {" +
+                "            callback('Token not refreshed, valid for ' + Math.round(window.keycloak.tokenParsed.exp + window.keycloak.timeSkew - new Date().getTime() / 1000) + ' seconds');" +
+                "       }" +
+                "   }).catch(function () {" +
+                "       callback('Failed to refresh token');" +
+                "   });";
 
         Object output = jsExecutor.executeAsyncScript(script);
 
@@ -206,12 +208,6 @@ public class JavascriptTestExecutor {
         }
 
         return this;
-    }
-
-    public boolean useNativePromises() {
-        return (boolean) jsExecutor.executeScript("if (typeof window.keycloak !== 'undefined') {" +
-                "return window.keycloak.useNativePromise" +
-                "} else { return false}");
     }
 
     public JavascriptTestExecutor openAccountPage(JavascriptStateValidator validator) {
@@ -234,22 +230,12 @@ public class JavascriptTestExecutor {
 
     public JavascriptTestExecutor getProfile(JavascriptStateValidator validator) {
 
-        String script;
-        if (useNativePromises()) {
-            script = "var callback = arguments[arguments.length - 1];" +
+        String script = "var callback = arguments[arguments.length - 1];" +
                     "   window.keycloak.loadUserProfile().then(function (profile) {" +
                     "       callback(profile);" +
                     "   }, function () {" +
                     "       callback('Failed to load profile');" +
                     "   });";
-        } else {
-            script = "var callback = arguments[arguments.length - 1];" +
-                    "   window.keycloak.loadUserProfile().success(function (profile) {" +
-                    "       callback(profile);" +
-                    "   }).error(function () {" +
-                    "       callback('Failed to load profile');" +
-                    "   });";
-        }
 
         Object output = jsExecutor.executeAsyncScript(script);
 
@@ -327,4 +313,13 @@ public class JavascriptTestExecutor {
         return this;
     }
 
+    public JavascriptTestExecutor wait(long millis, JavascriptStateValidator validator) {
+        pause(millis);
+
+        if (validator != null) {
+            validator.validate(jsDriver, null, events);
+        }
+
+        return this;
+    }
 }

@@ -42,6 +42,7 @@ import org.keycloak.admin.client.resource.ClientsResource;
 import org.keycloak.authorization.client.AuthzClient;
 import org.keycloak.authorization.client.Configuration;
 import org.keycloak.broker.provider.util.SimpleHttp;
+import org.keycloak.common.util.KeycloakUriBuilder;
 import org.keycloak.jose.jws.JWSInput;
 import org.keycloak.models.AccountRoles;
 import org.keycloak.representations.AccessToken;
@@ -159,18 +160,29 @@ public class ResourcesRestServiceTest extends AbstractRestServiceTest {
     }
 
     @Test
+    public void testGetMyResourcesByName() {
+        assertEquals(11, getMyResources("Resource 1").size());
+        assertEquals(0, getMyResources("non-existent\n").size());
+        assertEquals(1, getMyResources("Resource 23").size());
+    }
+
+    @Test
     public void testGetMyResourcesPagination() {
-        List<Resource> resources = getMyResources(0, 10, response -> assertNextPageLink(response, "/realms/test/account/resources", 10, 10));
+        List<Resource> resources = getMyResources(0, 10, response -> assertNextPageLink(response, "/realms/test/account/resources", 10, -1, 10));
 
         assertEquals(10, resources.size());
         assertMyResourcesResponse(resources);
 
-        resources = getMyResources(10, 10, response -> assertNextPageLink(response, "/realms/test/account/resources", 20, 10));
+        resources = getMyResources(10, 10, response -> assertNextPageLink(response, "/realms/test/account/resources", 20, 0, 10));
 
         assertEquals(10, resources.size());
 
         resources = getMyResources(20, 10, response -> {
-            assertNextPageLink(response, "/realms/test/account/resources", 20, 10, true);
+            assertNextPageLink(response, "/realms/test/account/resources", -1, 10, 10);
+        });
+
+        getMyResources(15, 5, response -> {
+            assertNextPageLink(response, "/realms/test/account/resources", 20, 10, 5);
         });
 
         assertEquals(10, resources.size());
@@ -179,20 +191,36 @@ public class ResourcesRestServiceTest extends AbstractRestServiceTest {
 
         assertEquals(0, resources.size());
 
+        getMyResources(5, 10, response -> {
+            assertNextPageLink(response, "/realms/test/account/resources", 15, 0, 10);
+        });
+
+        getMyResources(10, 10, response -> {
+            assertNextPageLink(response, "/realms/test/account/resources", 20, 0, 10);
+        });
+
+        getMyResources(20, 10, response -> {
+            assertNextPageLink(response, "/realms/test/account/resources", -1, 10, 10);
+        });
+
+        getMyResources(20, 20, response -> {
+            assertNextPageLink(response, "/realms/test/account/resources", -1, 0, 20);
+        });
+
         getMyResources(30, 30, response -> {
-            assertNextPageLink(response, "/realms/test/account/resources", 0, 0, true, true);
+            assertNextPageLink(response, "/realms/test/account/resources", -1, -1, 30);
         });
 
         getMyResources(30, 31, response -> {
-            assertNextPageLink(response, "/realms/test/account/resources", 0, 0, true, true);
+            assertNextPageLink(response, "/realms/test/account/resources", -1, -1, 31);
         });
 
         getMyResources(0, 30, response -> {
-            assertNextPageLink(response, "/realms/test/account/resources", 0, 0, true, true);
+            assertNextPageLink(response, "/realms/test/account/resources", -1, -1, 30);
         });
 
         getMyResources(0, 31, response -> {
-            assertNextPageLink(response, "/realms/test/account/resources", 0, 0, true, true);
+            assertNextPageLink(response, "/realms/test/account/resources", -1, -1, 31);
         });
     }
 
@@ -207,19 +235,26 @@ public class ResourcesRestServiceTest extends AbstractRestServiceTest {
     }
 
     @Test
+    public void testGetSharedWithMeByName() {
+        assertEquals(5, getSharedWithMe("jdoe", "Resource 1", -1, -1, null).size());
+        assertEquals(0, getSharedWithMe("jdoe", "non-existent", -1, -1, null).size());
+        assertEquals(10, getSharedWithMe("jdoe", "resource", -1, -1, null).size());
+    }
+
+    @Test
     public void testGetSharedWithMePagination() {
         for (String userName : userNames) {
-            List<AbstractResourceService.ResourcePermission> resources = getSharedWithMe(userName, 0, 3,
-                    response -> assertNextPageLink(response, "/realms/test/account/resources/shared-with-me", 3, 3));
+            List<AbstractResourceService.ResourcePermission> resources = getSharedWithMe(userName, null, 0, 3,
+                    response -> assertNextPageLink(response, "/realms/test/account/resources/shared-with-me", 3, -1, 3));
 
             assertSharedWithMeResponse(resources);
 
-            getSharedWithMe(userName, 3, 3,
-                    response -> assertNextPageLink(response, "/realms/test/account/resources/shared-with-me", 6, 3));
-            getSharedWithMe(userName, 6, 3,
-                    response -> assertNextPageLink(response, "/realms/test/account/resources/shared-with-me", 9, 3));
-            getSharedWithMe(userName, 9, 3,
-                    response -> assertNextPageLink(response, "/realms/test/account/resources/shared-with-me", 9, 3, true));
+            getSharedWithMe(userName, null, 3, 3,
+                    response -> assertNextPageLink(response, "/realms/test/account/resources/shared-with-me", 6, 0, 3));
+            getSharedWithMe(userName, null, 6, 3,
+                    response -> assertNextPageLink(response, "/realms/test/account/resources/shared-with-me", 9, 3, 3));
+            getSharedWithMe(userName, null, 9, 3,
+                    response -> assertNextPageLink(response, "/realms/test/account/resources/shared-with-me", -1, 6, 3));
         }
     }
 
@@ -237,20 +272,20 @@ public class ResourcesRestServiceTest extends AbstractRestServiceTest {
     public void testGetSharedWithOthersPagination() {
         List<AbstractResourceService.ResourcePermission> resources = doGet("/shared-with-others?first=0&max=5",
                 new TypeReference<List<AbstractResourceService.ResourcePermission>>() {
-                }, response -> assertNextPageLink(response, "/realms/test/account/resources/shared-with-others", 5, 5));
+                }, response -> assertNextPageLink(response, "/realms/test/account/resources/shared-with-others", 5, -1, 5));
 
         assertEquals(5, resources.size());
         assertSharedWithOthersResponse(resources);
 
         doGet("/shared-with-others?first=5&max=5",
                 new TypeReference<List<AbstractResourceService.ResourcePermission>>() {
-                }, response -> assertNextPageLink(response, "/realms/test/account/resources/shared-with-others", 10, 5));
+                }, response -> assertNextPageLink(response, "/realms/test/account/resources/shared-with-others", 10, 0, 5));
         doGet("/shared-with-others?first=20&max=5",
                 new TypeReference<List<AbstractResourceService.ResourcePermission>>() {
-                }, response -> assertNextPageLink(response, "/realms/test/account/resources/shared-with-others", 25, 5));
+                }, response -> assertNextPageLink(response, "/realms/test/account/resources/shared-with-others", 25, 15, 5));
         doGet("/shared-with-others?first=25&max=5",
                 new TypeReference<List<AbstractResourceService.ResourcePermission>>() {
-                }, response -> assertNextPageLink(response, "/realms/test/account/resources/shared-with-others", 25, 5, true));
+                }, response -> assertNextPageLink(response, "/realms/test/account/resources/shared-with-others", -1, 20, 5));
     }
 
     @Test
@@ -284,14 +319,14 @@ public class ResourcesRestServiceTest extends AbstractRestServiceTest {
 
         Permission firstShare = shares.get(0);
         List<Permission> permissions = new ArrayList<>();
-        
+
         assertTrue(userNames.contains(firstShare.getUsername()));
         assertEquals(2, firstShare.getScopes().size());
-        
+
         List<String> users = new ArrayList<>(userNames);
 
         users.remove(firstShare.getUsername());
-        
+
         for (String userName : users) {
             Permission permission = new Permission();
 
@@ -311,7 +346,7 @@ public class ResourcesRestServiceTest extends AbstractRestServiceTest {
 
         for (Permission user : shares) {
             assertTrue(userNames.contains(user.getUsername()));
-            
+
             if (firstShare.getUsername().equals(user.getUsername())) {
                 assertEquals(2, user.getScopes().size());
             } else {
@@ -335,20 +370,20 @@ public class ResourcesRestServiceTest extends AbstractRestServiceTest {
 
         permissions.add(new Permission(users.get(0), "Scope C", "Scope D"));
         permissions.add(new Permission(users.get(users.size() - 1), "Scope A", "Scope B", "Scope C", "Scope D"));
-        
+
         String resourceId = sharedResource.getId();
         SimpleHttp.Response response = SimpleHttp.doPut(getAccountUrl("resources/" + resourceId + "/permissions"), httpClient)
                 .auth(tokenUtil.getToken())
                 .json(permissions).asResponse();
 
         assertEquals(Response.Status.NO_CONTENT.getStatusCode(), response.getStatus());
-        
+
         for (String user : users) {
             sharedResource = getSharedWithMe(user).stream()
                     .filter(resource1 -> resource1.getId().equals(resourceId)).findAny().orElse(null);
 
             assertNotNull(sharedResource);
-            
+
             if (user.equals(users.get(users.size() - 1))) {
                 assertEquals(4, sharedResource.getScopes().size());
             } else {
@@ -410,14 +445,14 @@ public class ResourcesRestServiceTest extends AbstractRestServiceTest {
         Resource resource = getMyResources().get(0);
         List<Permission> requests = doGet("/" + resource.getId() + "/permissions/requests",
                 new TypeReference<List<Permission>>() {});
-        
+
         assertTrue(requests.isEmpty());
 
         for (String userName : userNames) {
             List<String> scopes = new ArrayList<>();
-            
+
             if ("bob".equals(userName)) {
-                scopes.add("Scope D");    
+                scopes.add("Scope D");
             } else if ("alice".equals(userName)) {
                 scopes.add("Scope C");
             } else if ("jdoe".equals(userName)) {
@@ -434,13 +469,13 @@ public class ResourcesRestServiceTest extends AbstractRestServiceTest {
                 ticket.setResource(resource.getId());
                 ticket.setScopeName(scope);
 
-                authzClient.protection("test-user@localhost", "password").permission().create(ticket);       
+                authzClient.protection("test-user@localhost", "password").permission().create(ticket);
             }
         }
 
         requests = doGet("/" + resource.getId() + "/permissions/requests",
                 new TypeReference<List<Permission>>() {});
-        
+
         assertEquals(3, requests.size());
 
         Iterator<Permission> iterator = requests.iterator();
@@ -465,7 +500,7 @@ public class ResourcesRestServiceTest extends AbstractRestServiceTest {
                 iterator.remove();
             }
         }
-        
+
         assertTrue(requests.isEmpty());
     }
 
@@ -527,7 +562,7 @@ public class ResourcesRestServiceTest extends AbstractRestServiceTest {
 
         requests = doGet("/" + resource.getId() + "/permissions/requests",
                 new TypeReference<List<Permission>>() {});
-        
+
         assertTrue(requests.isEmpty());
 
         for (String user : Arrays.asList("alice", "jdoe")) {
@@ -549,15 +584,22 @@ public class ResourcesRestServiceTest extends AbstractRestServiceTest {
     }
 
     private List<AbstractResourceService.ResourcePermission> getSharedWithMe(String userName) {
-        return getSharedWithMe(userName, -1, -1, null);
+        return getSharedWithMe(userName, null, -1, -1, null);
     }
 
-    private List<AbstractResourceService.ResourcePermission> getSharedWithMe(String userName, int first, int max, Consumer<SimpleHttp.Response> responseHandler) {
-        if (first > -1 && max > -1) {
-            return doGet("/shared-with-me?first=" + first + "&max=" + max, authzClient.obtainAccessToken(userName, "password").getToken(),
-                    new TypeReference<List<AbstractResourceService.ResourcePermission>>() {}, responseHandler);
+    private List<AbstractResourceService.ResourcePermission> getSharedWithMe(String userName, String name, int first, int max, Consumer<SimpleHttp.Response> responseHandler) {
+        KeycloakUriBuilder uri = KeycloakUriBuilder.fromUri("/shared-with-me");
+
+        if (name != null) {
+            uri.queryParam("name", name);
         }
-        return doGet("/shared-with-me", authzClient.obtainAccessToken(userName, "password").getToken(),
+
+        if (first > -1 && max > -1) {
+            uri.queryParam("first", first);
+            uri.queryParam("max", max);
+        }
+
+        return doGet(uri.build().toString(), authzClient.obtainAccessToken(userName, "password").getToken(),
                 new TypeReference<List<AbstractResourceService.ResourcePermission>>() {}, responseHandler);
     }
 
@@ -591,9 +633,9 @@ public class ResourcesRestServiceTest extends AbstractRestServiceTest {
             if (responseHandler != null) {
                 responseHandler.accept(response);
             }
-            
+
             R result = JsonSerialization.readValue(response.asString(), typeReference);
-            
+
             return result;
         } catch (IOException cause) {
             throw new RuntimeException("Failed to fetch resource", cause);
@@ -636,18 +678,35 @@ public class ResourcesRestServiceTest extends AbstractRestServiceTest {
         return getMyResources(-1, -1);
     }
 
+    private List<Resource> getMyResources(String name) {
+        return getMyResources(name, -1, -1);
+    }
+
     private List<Resource> getMyResources(int first, int max) {
-        if (first > -1 && max > -1) {
-            return doGet("?first=" + first + "&max=" + max, new TypeReference<List<Resource>>() {});
+        return getMyResources(null, first, max);
+    }
+
+    private List<Resource> getMyResources(String name, int first, int max) {
+        KeycloakUriBuilder uri = KeycloakUriBuilder.fromUri("");
+
+        if (name != null) {
+            uri.queryParam("name", name);
         }
-        return doGet("", new TypeReference<List<Resource>>() {});
+
+        if (first > -1 && max > -1) {
+            uri.queryParam("first", first);
+            uri.queryParam("max", max);
+        }
+
+        return doGet(uri.build().toString(), new TypeReference<List<Resource>>() {});
     }
 
     private List<Resource> getMyResources(int first, int max, Consumer<SimpleHttp.Response> response) {
+        String query = "";
         if (first > -1 && max > -1) {
-            return doGet("?first=" + first + "&max=" + max, new TypeReference<List<Resource>>() {}, response);
+            query = "?first=" + first + "&max=" + max;
         }
-        return doGet("", new TypeReference<List<Resource>>() {}, response);
+        return doGet(query, new TypeReference<List<Resource>>() {}, response);
     }
 
     private void assertSharedWithOthersResponse(List<AbstractResourceService.ResourcePermission> resources) {
@@ -674,7 +733,7 @@ public class ResourcesRestServiceTest extends AbstractRestServiceTest {
         for (Resource resource : resources) {
             String uri = resource.getUri();
             int id = Integer.parseInt(uri.substring(uri.lastIndexOf('/') + 1));
-            
+
             assertNotNull(resource.getId());
             assertEquals("Resource " + id, resource.getName());
             assertEquals("Display Name " + id, resource.getDisplayName());
@@ -700,31 +759,24 @@ public class ResourcesRestServiceTest extends AbstractRestServiceTest {
         }
     }
 
-    private void assertNextPageLink(SimpleHttp.Response response, String uri, int first, int max) {
-        assertNextPageLink(response, uri, first, max, false);
-    }
-
-    private void assertNextPageLink(SimpleHttp.Response response, String uri, int first, int max, boolean lastPage) {
-        assertNextPageLink(response, uri, first, max, lastPage, false);
-    }
-    
-    private void assertNextPageLink(SimpleHttp.Response response, String uri, int first, int max, boolean lastPage, boolean singlePage) {
+    private void assertNextPageLink(SimpleHttp.Response response, String uri, int nextPage, int previousPage, int max) {
         try {
             List<String> links = response.getHeader("Link");
 
-            if (singlePage) {
+            if (nextPage == -1 && previousPage == -1) {
                 assertNull(links);
                 return;
             }
-            
+
             assertNotNull(links);
-            assertEquals(lastPage ? 1 : 2, links.size());
-            
+
+            assertEquals(nextPage > -1 && previousPage > -1 ? 2 : 1, links.size());
+
             for (String link : links) {
                 if (link.contains("rel=\"next\"")) {
-                    assertEquals("<" + authzClient.getConfiguration().getAuthServerUrl() + uri + "?first=" + first + "&max=" + max + ">; rel=\"next\"", link);
+                    assertEquals("<" + authzClient.getConfiguration().getAuthServerUrl() + uri + "?first=" + nextPage + "&max=" + max + ">; rel=\"next\"", link);
                 } else {
-                    assertEquals("<" + authzClient.getConfiguration().getAuthServerUrl() + uri + "?first=" + (first - max) + "&max=" + max + ">; rel=\"prev\"", link);
+                    assertEquals("<" + authzClient.getConfiguration().getAuthServerUrl() + uri + "?first=" + previousPage + "&max=" + max + ">; rel=\"prev\"", link);
                 }
             }
         } catch (IOException e) {

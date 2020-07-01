@@ -19,9 +19,11 @@ package org.keycloak.services.resources.account.resources;
 import javax.ws.rs.BadRequestException;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.GET;
+import javax.ws.rs.NotFoundException;
 import javax.ws.rs.PUT;
 import javax.ws.rs.Path;
 import javax.ws.rs.Produces;
+import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.Response;
 import java.util.Calendar;
 import java.util.Collection;
@@ -39,6 +41,8 @@ import org.keycloak.models.UserModel;
 import org.keycloak.models.UserProvider;
 import org.keycloak.services.managers.Auth;
 import org.keycloak.utils.MediaType;
+
+import static org.keycloak.models.utils.ModelToRepresentation.toRepresentation;
 
 /**
  * @author <a href="mailto:psilva@redhat.com">Pedro Igor</a>
@@ -89,6 +93,18 @@ public class ResourceService extends AbstractResourceService {
         }
 
         return cors(Response.ok(permissions));
+    }
+
+    @GET
+    @Path("user")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response user(@QueryParam("value") String value) {
+        try {
+            final UserModel user = getUser(value);
+            return cors(Response.ok(toRepresentation(provider.getKeycloakSession(), provider.getRealm(), user)));
+        } catch (NotFoundException e) {
+            return cors(Response.noContent());
+        }
     }
 
     /**
@@ -205,7 +221,11 @@ public class ResourceService extends AbstractResourceService {
         UserModel user = users.getUserByUsername(requester, provider.getRealm());
 
         if (user == null) {
-            user = users.getUserById(requester, provider.getRealm());
+            user = users.getUserByEmail(requester, provider.getRealm());
+        }
+
+        if (user == null) {
+            throw new NotFoundException(requester);
         }
 
         return user;

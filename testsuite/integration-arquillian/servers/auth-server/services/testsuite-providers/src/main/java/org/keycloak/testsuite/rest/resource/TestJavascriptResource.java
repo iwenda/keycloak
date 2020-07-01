@@ -1,5 +1,7 @@
 package org.keycloak.testsuite.rest.resource;
 
+import org.keycloak.headers.SecurityHeadersProvider;
+import org.keycloak.models.KeycloakSession;
 import org.keycloak.testsuite.rest.TestingResourceProvider;
 
 import javax.ws.rs.GET;
@@ -11,10 +13,18 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 
+import static org.keycloak.testsuite.util.ServerURLs.getAuthServerContextRoot;
+
 /**
  * @author mhajas
  */
 public class TestJavascriptResource {
+
+    private KeycloakSession session;
+
+    public TestJavascriptResource(KeycloakSession session) {
+        this.session = session;
+    }
 
     @GET
     @Path("/js/keycloak.js")
@@ -27,6 +37,7 @@ public class TestJavascriptResource {
     @Path("/index.html")
     @Produces(MediaType.TEXT_HTML)
     public String getJavascriptTestingEnvironment() throws IOException {
+        session.getProvider(SecurityHeadersProvider.class).options().skipHeaders();
         return resourceToString("/javascript/index.html");
     }
 
@@ -54,6 +65,6 @@ public class TestJavascriptResource {
             line = buf.readLine();
         }
 
-        return sb.toString();
+        return sb.toString().replace("${js-adapter.auth-server-url}", getAuthServerContextRoot() + "/auth");
     }
 }

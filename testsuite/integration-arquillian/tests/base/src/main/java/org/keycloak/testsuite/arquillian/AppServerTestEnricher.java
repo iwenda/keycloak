@@ -49,7 +49,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import static org.keycloak.testsuite.arquillian.AuthServerTestEnricher.getAuthServerContextRoot;
+import static org.keycloak.testsuite.util.ServerURLs.getAppServerContextRoot;
+import static org.keycloak.testsuite.util.ServerURLs.getAuthServerContextRoot;
 
 /**
  *
@@ -60,6 +61,7 @@ public class AppServerTestEnricher {
     private static final Logger log = Logger.getLogger(AppServerTestEnricher.class);
 
     public static final String CURRENT_APP_SERVER = System.getProperty("app.server", "undertow");
+    public static final boolean APP_SERVER_SSL_REQUIRED = Boolean.parseBoolean(System.getProperty("app.server.ssl.required", "false"));
 
     @Inject private Instance<ContainerController> containerConrollerInstance;
     @Inject private Instance<TestContext> testContextInstance;
@@ -92,29 +94,6 @@ public class AppServerTestEnricher {
         }
 
         return appServerQualifiers;
-    }
-
-    public static String getAppServerContextRoot() {
-        return getAppServerContextRoot(0);
-    }
-
-    public static String getAppServerContextRoot(int clusterPortOffset) {
-        String host = System.getProperty("app.server.host", "localhost");
-
-        boolean sslRequired = Boolean.parseBoolean(System.getProperty("app.server.ssl.required"));
-
-        int port = sslRequired ? parsePort("app.server.https.port") : parsePort("app.server.http.port");
-        String scheme = sslRequired ? "https" : "http";
-
-        return String.format("%s://%s:%s", scheme, host, port + clusterPortOffset);
-    }
-
-    private static int parsePort(String property) {
-        try {
-            return Integer.parseInt(System.getProperty(property));
-        } catch (NumberFormatException ex) {
-            throw new RuntimeException("Failed to get " + property, ex);
-        }
     }
 
     public static String getAppServerBrowserContextRoot() throws MalformedURLException {
@@ -314,6 +293,10 @@ public class AppServerTestEnricher {
 
     public static boolean isFuseAppServer() {
         return CURRENT_APP_SERVER.contains("fuse");
+    }
+
+    public static boolean isRemoteAppServer() {
+        return CURRENT_APP_SERVER.contains("remote");
     }
 
     private boolean isJBossBased() {

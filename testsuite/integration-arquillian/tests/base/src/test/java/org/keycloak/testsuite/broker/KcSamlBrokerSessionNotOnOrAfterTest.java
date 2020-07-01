@@ -22,7 +22,7 @@ import static org.keycloak.testsuite.broker.BrokerTestConstants.USER_EMAIL;
 import static org.keycloak.testsuite.broker.BrokerTestConstants.USER_LOGIN;
 import static org.keycloak.testsuite.broker.BrokerTestConstants.USER_PASSWORD;
 
-public class KcSamlBrokerSessionNotOnOrAfterTest extends AbstractSamlBrokerTest {
+public class KcSamlBrokerSessionNotOnOrAfterTest extends AbstractBrokerTest {
 
     @Override
     protected BrokerConfiguration getBrokerConfiguration() {
@@ -32,7 +32,7 @@ public class KcSamlBrokerSessionNotOnOrAfterTest extends AbstractSamlBrokerTest 
     @Test
     public void testConsumerIdpInitiatedLoginContainsSessionNotOnOrAfter() throws Exception {
         SAMLDocumentHolder samlResponse = new SamlClientBuilder()
-                .idpInitiatedLogin(getAuthServerSamlEndpoint(REALM_CONS_NAME), "sales-post").build()
+                .idpInitiatedLogin(getConsumerSamlEndpoint(REALM_CONS_NAME), "sales-post").build()
                 // Request login via kc-saml-idp
                 .login().idp(IDP_SAML_ALIAS).build()
 

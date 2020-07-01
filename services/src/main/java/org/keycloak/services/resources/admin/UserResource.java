@@ -18,8 +18,8 @@ package org.keycloak.services.resources.admin;
 
 import org.jboss.logging.Logger;
 import org.jboss.resteasy.annotations.cache.NoCache;
-import org.jboss.resteasy.spi.BadRequestException;
-import org.jboss.resteasy.spi.NotFoundException;
+import javax.ws.rs.BadRequestException;
+import javax.ws.rs.NotFoundException;
 import org.jboss.resteasy.spi.ResteasyProviderFactory;
 import org.keycloak.authentication.RequiredActionProvider;
 import org.keycloak.authentication.actiontoken.execactions.ExecuteActionsActionToken;
@@ -40,7 +40,6 @@ import org.keycloak.models.Constants;
 import org.keycloak.models.FederatedIdentityModel;
 import org.keycloak.models.GroupModel;
 import org.keycloak.models.IdentityProviderModel;
-import org.keycloak.models.ImpersonationSessionNote;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.ModelDuplicateException;
 import org.keycloak.models.ModelException;
@@ -78,7 +77,9 @@ import org.keycloak.utils.ProfileHelper;
 
 import javax.ws.rs.Consumes;
 import javax.ws.rs.DELETE;
+import javax.ws.rs.DefaultValue;
 import javax.ws.rs.GET;
+import javax.ws.rs.NotSupportedException;
 import javax.ws.rs.POST;
 import javax.ws.rs.PUT;
 import javax.ws.rs.Path;
@@ -105,6 +106,7 @@ import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import static org.keycloak.models.ImpersonationSessionNote.IMPERSONATOR_ID;
 import static org.keycloak.models.ImpersonationSessionNote.IMPERSONATOR_USERNAME;
@@ -158,6 +160,10 @@ public class UserResource {
             if (rep.getAttributes() != null) {
                 attrsToRemove = new HashSet<>(user.getAttributes().keySet());
                 attrsToRemove.removeAll(rep.getAttributes().keySet());
+                attrsToRemove.remove(UserModel.FIRST_NAME);
+                attrsToRemove.remove(UserModel.LAST_NAME);
+                attrsToRemove.remove(UserModel.EMAIL);
+                attrsToRemove.remove(UserModel.USERNAME);
             } else {
                 attrsToRemove = Collections.emptySet();
             }
@@ -183,20 +189,26 @@ public class UserResource {
             return ErrorResponse.exists("User is read only!");
         } catch (ModelException me) {
             logger.warn("Could not update user!", me);
-            return ErrorResponse.exists("Could not update user!");
+            return ErrorResponse.error("Could not update user!", Status.BAD_REQUEST);
         } catch (ForbiddenException fe) {
             throw fe;
         } catch (Exception me) { // JPA
             logger.warn("Could not update user!", me);// may be committed by JTA which can't
-            return ErrorResponse.exists("Could not update user!");
+            return ErrorResponse.error("Could not update user!", Status.BAD_REQUEST);
         }
     }
 
     public static void updateUserFromRep(UserModel user, UserRepresentation rep, Set<String> attrsToRemove, RealmModel realm, KeycloakSession session, boolean removeMissingRequiredActions) {
-        if (rep.getUsername() != null && realm.isEditUsernameAllowed()) {
+        if (rep.getUsername() != null && realm.isEditUsernameAllowed() && !realm.isRegistrationEmailAsUsername()) {
             user.setUsername(rep.getUsername());
         }
-        if (rep.getEmail() != null) user.setEmail(rep.getEmail());
+        if (rep.getEmail() != null) {
+            String email = rep.getEmail();
+            user.setEmail(email);
+            if(realm.isRegistrationEmailAsUsername()) {
+                user.setUsername(email);
+            }
+        }
         if (rep.getEmail() == "") user.setEmail(null);
         if (rep.getFirstName() != null) user.setFirstName(rep.getFirstName());
         if (rep.getLastName() != null) user.setLastName(rep.getLastName());
@@ -222,9 +234,22 @@ public class UserResource {
             }
         }
 
+        List<CredentialRepresentation> credentials = rep.getCredentials();
+        if (credentials != null) {
+            for (CredentialRepresentation credential : credentials) {
+                if (CredentialRepresentation.PASSWORD.equals(credential.getType()) && credential.isTemporary() != null
+                        && credential.isTemporary()) {
+                    user.addRequiredAction(UserModel.RequiredAction.UPDATE_PASSWORD);
+                }
+            }
+        }
+
         if (rep.getAttributes() != null) {
             for (Map.Entry<String, List<String>> attr : rep.getAttributes().entrySet()) {
-                user.setAttribute(attr.getKey(), attr.getValue());
+                List<String> currentValue = user.getAttribute(attr.getKey());
+                if (currentValue == null || currentValue.size() != attr.getValue().size() || !currentValue.containsAll(attr.getValue())) {
+                    user.setAttribute(attr.getKey(), attr.getValue());
+                }
             }
 
             for (String attr : attrsToRemove) {
@@ -293,7 +318,7 @@ public class UserResource {
         userSession.setNote(IMPERSONATOR_USERNAME.toString(), impersonator);
 
         AuthenticationManager.createLoginCookie(session, realm, userSession.getUser(), userSession, session.getContext().getUri(), clientConnection);
-        URI redirect = AccountFormService.accountServiceApplicationPage(session.getContext().getUri()).build(realm.getName());
+        URI redirect = AccountFormService.accountServiceBaseUrl(session.getContext().getUri()).build(realm.getName());
         Map<String, Object> result = new HashMap<>();
         result.put("sameRealm", sameRealm);
         result.put("redirect", redirect.toString());
@@ -477,6 +502,7 @@ public class UserResource {
         return result;
     }
 
+
     /**
      * Revoke consent and offline tokens for particular client from user
      *
@@ -568,56 +594,140 @@ public class UserResource {
             session.userCredentialManager().disableCredentialType(realm, user, type);
 
         }
-
-
     }
 
     /**
      * Set up a new password for the user.
      *
-     * @param pass The representation must contain a value and the type equals to "password"
+     * @param cred The representation must contain a rawPassword with the plain-text password
      */
     @Path("reset-password")
     @PUT
     @Consumes(MediaType.APPLICATION_JSON)
-    public void resetPassword(CredentialRepresentation pass) {
+    public void resetPassword(CredentialRepresentation cred) {
         auth.users().requireManage(user);
-        if (pass == null || pass.getValue() == null || !CredentialRepresentation.PASSWORD.equals(pass.getType())) {
+        if (cred == null || cred.getValue() == null) {
             throw new BadRequestException("No password provided");
         }
-        if (Validation.isBlank(pass.getValue())) {
+        if (Validation.isBlank(cred.getValue())) {
             throw new BadRequestException("Empty password not allowed");
         }
 
-        UserCredentialModel cred = UserCredentialModel.password(pass.getValue(), true);
         try {
-            session.userCredentialManager().updateCredential(realm, user, cred);
+            session.userCredentialManager().updateCredential(realm, user, UserCredentialModel.password(cred.getValue(), false));
         } catch (IllegalStateException ise) {
             throw new BadRequestException("Resetting to N old passwords is not allowed.");
         } catch (ReadOnlyException mre) {
             throw new BadRequestException("Can't reset password as account is read only");
         } catch (ModelException e) {
+            logger.warn("Could not update user password.", e);
             Properties messages = AdminRoot.getMessages(session, realm, auth.adminAuth().getToken().getLocale());
             throw new ErrorResponseException(e.getMessage(), MessageFormat.format(messages.getProperty(e.getMessage(), e.getMessage()), e.getParameters()),
                     Status.BAD_REQUEST);
         }
-        if (pass.isTemporary() != null && pass.isTemporary()) user.addRequiredAction(UserModel.RequiredAction.UPDATE_PASSWORD);
+        if (cred.isTemporary() != null && cred.isTemporary()) {
+            user.addRequiredAction(UserModel.RequiredAction.UPDATE_PASSWORD);
+        } else {
+            // Remove a potentially existing UPDATE_PASSWORD action when explicitly assigning a non-temporary password.
+            user.removeRequiredAction(UserModel.RequiredAction.UPDATE_PASSWORD);
+        }
 
         adminEvent.operation(OperationType.ACTION).resourcePath(session.getContext().getUri()).success();
     }
 
+
+    @GET
+    @Path("credentials")
+    @NoCache
+    @Produces(MediaType.APPLICATION_JSON)
+    public List<CredentialRepresentation> credentials(){
+        auth.users().requireManage(user);
+        List<CredentialModel> models = session.userCredentialManager().getStoredCredentials(realm, user);
+        models.forEach(c -> c.setSecretData(null));
+        return models.stream().map(ModelToRepresentation::toRepresentation).collect(Collectors.toList());
+    }
+
+
     /**
-     * Remove TOTP from the user
+     * Return credential types, which are provided by the user storage where user is stored. Returned values can contain for example "password", "otp" etc.
+     * This will always return empty list for "local" users, which are not backed by any user storage
+     *
+     * @return
+     */
+    @GET
+    @Path("configured-user-storage-credential-types")
+    @NoCache
+    @Produces(MediaType.APPLICATION_JSON)
+    public List<String> getConfiguredUserStorageCredentialTypes() {
+        // This has "requireManage" due the compatibility with "credentials()" endpoint. Strictly said, it is reading endpoint, not writing,
+        // so may be revisited if to rather use "requireView" here in the future.
+        auth.users().requireManage(user);
+        return session.userCredentialManager().getConfiguredUserStorageCredentialTypes(realm, user);
+    }
+
+
+    /**
+     * Remove a credential for a user
      *
      */
-    @Path("remove-totp")
-    @PUT
-    @Consumes(MediaType.APPLICATION_JSON)
-    public void removeTotp() {
+    @Path("credentials/{credentialId}")
+    @DELETE
+    @NoCache
+    public void removeCredential(final @PathParam("credentialId") String credentialId) {
         auth.users().requireManage(user);
-
-        session.userCredentialManager().disableCredentialType(realm, user, CredentialModel.OTP);
+        CredentialModel credential = session.userCredentialManager().getStoredCredentialById(realm, user, credentialId);
+        if (credential == null) {
+            // we do this to make sure somebody can't phish ids
+            if (auth.users().canQuery()) throw new NotFoundException("Credential not found");
+            else throw new ForbiddenException();
+        }
+        session.userCredentialManager().removeStoredCredential(realm, user, credentialId);
         adminEvent.operation(OperationType.ACTION).resourcePath(session.getContext().getUri()).success();
+    }
+
+    /**
+     * Update a credential label for a user
+     */
+    @PUT
+    @Consumes(javax.ws.rs.core.MediaType.TEXT_PLAIN)
+    @Path("credentials/{credentialId}/userLabel")
+    public void setCredentialUserLabel(final @PathParam("credentialId") String credentialId, String userLabel) {
+        auth.users().requireManage(user);
+        CredentialModel credential = session.userCredentialManager().getStoredCredentialById(realm, user, credentialId);
+        if (credential == null) {
+            // we do this to make sure somebody can't phish ids
+            if (auth.users().canQuery()) throw new NotFoundException("Credential not found");
+            else throw new ForbiddenException();
+        }
+        session.userCredentialManager().updateCredentialLabel(realm, user, credentialId, userLabel);
+    }
+
+    /**
+     * Move a credential to a first position in the credentials list of the user
+     * @param credentialId The credential to move
+     */
+    @Path("credentials/{credentialId}/moveToFirst")
+    @POST
+    public void moveCredentialToFirst(final @PathParam("credentialId") String credentialId){
+        moveCredentialAfter(credentialId, null);
+    }
+
+    /**
+     * Move a credential to a position behind another credential
+     * @param credentialId The credential to move
+     * @param newPreviousCredentialId The credential that will be the previous element in the list. If set to null, the moved credential will be the first element in the list.
+     */
+    @Path("credentials/{credentialId}/moveAfter/{newPreviousCredentialId}")
+    @POST
+    public void moveCredentialAfter(final @PathParam("credentialId") String credentialId, final @PathParam("newPreviousCredentialId") String newPreviousCredentialId){
+        auth.users().requireManage(user);
+        CredentialModel credential = session.userCredentialManager().getStoredCredentialById(realm, user, credentialId);
+        if (credential == null) {
+            // we do this to make sure somebody can't phish ids
+            if (auth.users().canQuery()) throw new NotFoundException("Credential not found");
+            else throw new ForbiddenException();
+        }
+        session.userCredentialManager().moveCredentialTo(realm, user, credentialId, newPreviousCredentialId);
     }
 
     /**
@@ -699,7 +809,7 @@ public class UserResource {
 
         String redirect;
         if (redirectUri != null) {
-            redirect = RedirectUtils.verifyRedirectUri(session.getContext().getUri(), redirectUri, realm, client);
+            redirect = RedirectUtils.verifyRedirectUri(session, redirectUri, client);
             if (redirect == null) {
                 throw new WebApplicationException(
                     ErrorResponse.error("Invalid redirect uri.", Status.BAD_REQUEST));
@@ -728,7 +838,7 @@ public class UserResource {
 
             adminEvent.operation(OperationType.ACTION).resourcePath(session.getContext().getUri()).success();
 
-            return Response.ok().build();
+            return Response.noContent().build();
         } catch (EmailException e) {
             ServicesLogger.LOGGER.failedToSendActionsEmail(e);
             return ErrorResponse.error("Failed to send execute actions email", Status.INTERNAL_SERVER_ERROR);
@@ -761,16 +871,17 @@ public class UserResource {
     @Produces(MediaType.APPLICATION_JSON)
     public List<GroupRepresentation> groupMembership(@QueryParam("search") String search,
                                                      @QueryParam("first") Integer firstResult,
-                                                     @QueryParam("max") Integer maxResults) {
+                                                     @QueryParam("max") Integer maxResults,
+                                                     @QueryParam("briefRepresentation") @DefaultValue("true") boolean briefRepresentation) {
         auth.users().requireView(user);
         List<GroupRepresentation> results;
 
         if (Objects.nonNull(search) && Objects.nonNull(firstResult) && Objects.nonNull(maxResults)) {
-            results = ModelToRepresentation.searchForGroupByName(user, false, search.trim(), firstResult, maxResults);
+            results = ModelToRepresentation.searchForGroupByName(user, !briefRepresentation, search.trim(), firstResult, maxResults);
         } else if(Objects.nonNull(firstResult) && Objects.nonNull(maxResults)) {
-            results = ModelToRepresentation.toGroupHierarchy(user, false, firstResult, maxResults);
+            results = ModelToRepresentation.toGroupHierarchy(user, !briefRepresentation, firstResult, maxResults);
         } else {
-            results = ModelToRepresentation.toGroupHierarchy(user, false);
+            results = ModelToRepresentation.toGroupHierarchy(user, !briefRepresentation);
         }
 
         return results;

@@ -107,6 +107,16 @@ public class ClientAdapter implements ClientModel, JpaModel<ClientEntity> {
     }
 
     @Override
+    public boolean isAlwaysDisplayInConsole() {
+        return entity.isAlwaysDisplayInConsole();
+    }
+
+    @Override
+    public void setAlwaysDisplayInConsole(boolean alwaysDisplayInConsole) {
+        entity.setAlwaysDisplayInConsole(alwaysDisplayInConsole);
+    }
+
+    @Override
     public boolean isPublicClient() {
         return entity.isPublicClient();
     }
@@ -345,6 +355,18 @@ public class ClientAdapter implements ClientModel, JpaModel<ClientEntity> {
     public void addClientScope(ClientScopeModel clientScope, boolean defaultScope) {
         if (getClientScopes(defaultScope, false).containsKey(clientScope.getName())) return;
 
+        persist(clientScope, defaultScope);
+    }
+
+    @Override
+    public void addClientScopes(Set<ClientScopeModel> clientScopes, boolean defaultScope) {
+        Map<String, ClientScopeModel> existingClientScopes = getClientScopes(defaultScope, false);
+        clientScopes.stream()
+                .filter(clientScope -> !existingClientScopes.containsKey(clientScope.getName()))
+                .forEach(clientScope -> persist(clientScope, defaultScope));
+    }
+
+    private void persist(ClientScopeModel clientScope, boolean defaultScope) {
         ClientScopeClientMappingEntity entity = new ClientScopeClientMappingEntity();
         entity.setClientScope(ClientScopeAdapter.toClientScopeEntity(clientScope, em));
         entity.setClient(getEntity());
@@ -652,6 +674,16 @@ public class ClientAdapter implements ClientModel, JpaModel<ClientEntity> {
     @Override
     public Set<RoleModel> getRoles() {
         return session.realms().getClientRoles(realm, this);
+    }
+    
+    @Override
+    public Set<RoleModel> getRoles(Integer first, Integer max) {
+        return session.realms().getClientRoles(realm, this, first, max);
+    }
+    
+    @Override
+    public Set<RoleModel> searchForRoles(String search, Integer first, Integer max) {
+        return session.realms().searchForClientRoles(realm, this, search, first, max);
     }
 
     @Override

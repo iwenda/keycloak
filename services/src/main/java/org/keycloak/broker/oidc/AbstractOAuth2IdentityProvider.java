@@ -43,6 +43,7 @@ import org.keycloak.events.EventType;
 import org.keycloak.jose.jws.JWSBuilder;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.FederatedIdentityModel;
+import org.keycloak.models.KeycloakContext;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
@@ -54,6 +55,7 @@ import org.keycloak.representations.AccessTokenResponse;
 import org.keycloak.representations.JsonWebToken;
 import org.keycloak.services.ErrorPage;
 import org.keycloak.services.ErrorResponseException;
+import org.keycloak.services.Urls;
 import org.keycloak.services.messages.Messages;
 import org.keycloak.sessions.AuthenticationSessionModel;
 import org.keycloak.vault.VaultStringSecret;
@@ -335,13 +337,6 @@ public abstract class AbstractOAuth2IdentityProvider<C extends OAuth2IdentityPro
             uriBuilder.queryParam(OAuth2Constants.PROMPT, prompt);
         }
 
-        String nonce = request.getAuthenticationSession().getClientNote(OIDCLoginProtocol.NONCE_PARAM);
-        if (nonce == null || nonce.isEmpty()) {
-            nonce = UUID.randomUUID().toString();
-            request.getAuthenticationSession().setClientNote(OIDCLoginProtocol.NONCE_PARAM, nonce);
-        }
-        uriBuilder.queryParam(OIDCLoginProtocol.NONCE_PARAM, nonce);
-
         String acr = request.getAuthenticationSession().getClientNote(OAuth2Constants.ACR_VALUES);
         if (acr != null) {
             uriBuilder.queryParam(OAuth2Constants.ACR_VALUES, acr);
@@ -387,6 +382,51 @@ public abstract class AbstractOAuth2IdentityProvider<C extends OAuth2IdentityPro
     public void authenticationFinished(AuthenticationSessionModel authSession, BrokeredIdentityContext context) {
         String token = (String) context.getContextData().get(FEDERATED_ACCESS_TOKEN);
         if (token != null) authSession.setUserSessionNote(FEDERATED_ACCESS_TOKEN, token);
+    }
+
+    public SimpleHttp authenticateTokenRequest(final SimpleHttp tokenRequest) {
+        if (getConfig().isJWTAuthentication()) {
+            String jws = new JWSBuilder().type(OAuth2Constants.JWT).jsonContent(generateToken()).sign(getSignatureContext());
+            return tokenRequest
+                    .param(OAuth2Constants.CLIENT_ASSERTION_TYPE, OAuth2Constants.CLIENT_ASSERTION_TYPE_JWT)
+                    .param(OAuth2Constants.CLIENT_ASSERTION, jws);
+        } else {
+            try (VaultStringSecret vaultStringSecret = session.vault().getStringSecret(getConfig().getClientSecret())) {
+                if (getConfig().isBasicAuthentication()) {
+                    return tokenRequest.authBasic(getConfig().getClientId(), vaultStringSecret.get().orElse(getConfig().getClientSecret()));
+                }
+                return tokenRequest
+                        .param(OAUTH2_PARAMETER_CLIENT_ID, getConfig().getClientId())
+                        .param(OAUTH2_PARAMETER_CLIENT_SECRET, vaultStringSecret.get().orElse(getConfig().getClientSecret()));
+            }
+        }
+    }
+
+    protected JsonWebToken generateToken() {
+        JsonWebToken jwt = new JsonWebToken();
+        jwt.id(KeycloakModelUtils.generateId());
+        jwt.type(OAuth2Constants.JWT);
+        jwt.issuer(getConfig().getClientId());
+        jwt.subject(getConfig().getClientId());
+        jwt.audience(getConfig().getTokenUrl());
+        int expirationDelay = session.getContext().getRealm().getAccessCodeLifespan();
+        jwt.expiration(Time.currentTime() + expirationDelay);
+        jwt.issuedNow();
+        return jwt;
+    }
+
+    protected SignatureSignerContext getSignatureContext() {
+        if (getConfig().getClientAuthMethod().equals(OIDCLoginProtocol.CLIENT_SECRET_JWT)) {
+            try (VaultStringSecret vaultStringSecret = session.vault().getStringSecret(getConfig().getClientSecret())) {
+                KeyWrapper key = new KeyWrapper();
+                key.setAlgorithm(Algorithm.HS256);
+                byte[] decodedSecret = vaultStringSecret.get().orElse(getConfig().getClientSecret()).getBytes();
+                SecretKey secret = new SecretKeySpec(decodedSecret, 0, decodedSecret.length, Algorithm.HS256);
+                key.setSecretKey(secret);
+                return new MacSignatureSignerContext(key);
+            }
+        }
+        return new AsymmetricSignatureProvider(session, Algorithm.RS256).signer();
     }
 
     protected class Endpoint {
@@ -454,51 +494,13 @@ public abstract class AbstractOAuth2IdentityProvider<C extends OAuth2IdentityPro
         }
 
         public SimpleHttp generateTokenRequest(String authorizationCode) {
+            KeycloakContext context = session.getContext();
             SimpleHttp tokenRequest = SimpleHttp.doPost(getConfig().getTokenUrl(), session)
                     .param(OAUTH2_PARAMETER_CODE, authorizationCode)
-                    .param(OAUTH2_PARAMETER_REDIRECT_URI, session.getContext().getUri().getAbsolutePath().toString())
+                    .param(OAUTH2_PARAMETER_REDIRECT_URI, Urls.identityProviderAuthnResponse(context.getUri().getBaseUri(),
+                            getConfig().getAlias(), context.getRealm().getName()).toString())
                     .param(OAUTH2_PARAMETER_GRANT_TYPE, OAUTH2_GRANT_TYPE_AUTHORIZATION_CODE);
-            if (getConfig().isJWTAuthentication()) {
-                String jws = new JWSBuilder().type(OAuth2Constants.JWT).jsonContent(generateToken()).sign(getSignatureContext());
-                return tokenRequest
-                        .param(OAuth2Constants.CLIENT_ASSERTION_TYPE, OAuth2Constants.CLIENT_ASSERTION_TYPE_JWT)
-                        .param(OAuth2Constants.CLIENT_ASSERTION, jws);
-            } else {
-                try (VaultStringSecret vaultStringSecret = session.vault().getStringSecret(getConfig().getClientSecret())) {
-                    if (getConfig().isBasicAuthentication()) {
-                        return tokenRequest.authBasic(getConfig().getClientId(), vaultStringSecret.get().orElse(getConfig().getClientSecret()));
-                    }
-                    return tokenRequest
-                            .param(OAUTH2_PARAMETER_CLIENT_ID, getConfig().getClientId())
-                            .param(OAUTH2_PARAMETER_CLIENT_SECRET, vaultStringSecret.get().orElse(getConfig().getClientSecret()));
-                }
-            }
-        }
-        
-        protected JsonWebToken generateToken() {
-            JsonWebToken jwt = new JsonWebToken();
-            jwt.id(KeycloakModelUtils.generateId());
-            jwt.type(OAuth2Constants.JWT);
-            jwt.issuer(getConfig().getClientId());
-            jwt.subject(getConfig().getClientId());
-            jwt.audience(getConfig().getTokenUrl());
-            jwt.issuedNow();
-            jwt.expiration(Time.currentTime() + realm.getAccessCodeLifespan());
-            return jwt;
-        }
-        
-        protected SignatureSignerContext getSignatureContext() {
-            if (getConfig().getClientAuthMethod().equals(OIDCLoginProtocol.CLIENT_SECRET_JWT)) {
-                try (VaultStringSecret vaultStringSecret = session.vault().getStringSecret(getConfig().getClientSecret())) {
-                    KeyWrapper key = new KeyWrapper();
-                    key.setAlgorithm(Algorithm.HS256);
-                    byte[] decodedSecret = vaultStringSecret.get().orElse(getConfig().getClientSecret()).getBytes();
-                    SecretKey secret = new SecretKeySpec(decodedSecret, 0, decodedSecret.length, Algorithm.HS256);
-                    key.setSecretKey(secret);
-                    return new MacSignatureSignerContext(key);
-                }
-            }
-            return new AsymmetricSignatureProvider(session, Algorithm.RS256).signer();
+            return authenticateTokenRequest(tokenRequest);
         }
         
     }

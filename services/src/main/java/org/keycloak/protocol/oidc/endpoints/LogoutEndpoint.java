@@ -22,11 +22,14 @@ import org.jboss.resteasy.annotations.cache.NoCache;
 import org.jboss.resteasy.spi.HttpRequest;
 import org.keycloak.OAuth2Constants;
 import org.keycloak.OAuthErrorException;
+import org.keycloak.TokenVerifier;
 import org.keycloak.common.ClientConnection;
+import org.keycloak.common.VerificationException;
 import org.keycloak.events.Details;
 import org.keycloak.events.Errors;
 import org.keycloak.events.EventBuilder;
 import org.keycloak.events.EventType;
+import org.keycloak.headers.SecurityHeadersProvider;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
@@ -105,7 +108,7 @@ public class LogoutEndpoint {
         String redirect = postLogoutRedirectUri != null ? postLogoutRedirectUri : redirectUri;
 
         if (redirect != null) {
-            String validatedUri = RedirectUtils.verifyRealmRedirectUri(session.getContext().getUri(), redirect, realm);
+            String validatedUri = RedirectUtils.verifyRealmRedirectUri(session, redirect);
             if (validatedUri == null) {
                 event.event(EventType.LOGOUT);
                 event.detail(Details.REDIRECT_URI, redirect);
@@ -116,15 +119,17 @@ public class LogoutEndpoint {
         }
 
         UserSessionModel userSession = null;
+        IDToken idToken = null;
         if (encodedIdToken != null) {
             try {
-                IDToken idToken = tokenManager.verifyIDTokenSignature(session, encodedIdToken);
+                idToken = tokenManager.verifyIDTokenSignature(session, encodedIdToken);
+                TokenVerifier.createWithoutSignature(idToken).tokenType(TokenUtil.TOKEN_TYPE_ID).verify();
                 userSession = session.sessions().getUserSession(realm, idToken.getSessionState());
 
                 if (userSession != null) {
                     checkTokenIssuedAt(idToken, userSession);
                 }
-            } catch (OAuthErrorException e) {
+            } catch (OAuthErrorException | VerificationException e) {
                 event.event(EventType.LOGOUT);
                 event.error(Errors.INVALID_TOKEN);
                 return ErrorPage.error(session, null, Response.Status.BAD_REQUEST, Messages.SESSION_NOT_ACTIVE);
@@ -135,14 +140,14 @@ public class LogoutEndpoint {
         AuthenticationManager.AuthResult authResult = AuthenticationManager.authenticateIdentityCookie(session, realm, false);
         if (authResult != null) {
             userSession = userSession != null ? userSession : authResult.getSession();
-            if (redirect != null) userSession.setNote(OIDCLoginProtocol.LOGOUT_REDIRECT_URI, redirect);
-            if (state != null) userSession.setNote(OIDCLoginProtocol.LOGOUT_STATE_PARAM, state);
-            userSession.setNote(AuthenticationManager.KEYCLOAK_LOGOUT_PROTOCOL, OIDCLoginProtocol.LOGIN_PROTOCOL);
-            logger.debug("Initiating OIDC browser logout");
-            Response response =  AuthenticationManager.browserLogout(session, realm, authResult.getSession(), session.getContext().getUri(), clientConnection, headers, initiatingIdp);
-            logger.debug("finishing OIDC browser logout");
-            return response;
-        } else if (userSession != null) { // non browser logout
+            return initiateBrowserLogout(userSession, redirect, state, initiatingIdp);
+        }
+        else if (userSession != null) {
+            // identity cookie is missing but there's valid id_token_hint which matches session cookie => continue with browser logout
+            if (idToken != null && idToken.getSessionState().equals(AuthenticationManager.getSessionIdFromSessionCookie(session))) {
+                return initiateBrowserLogout(userSession, redirect, state, initiatingIdp);
+            }
+            // non browser logout
             event.event(EventType.LOGOUT);
             AuthenticationManager.backchannelLogout(session, realm, userSession, session.getContext().getUri(), clientConnection, headers, true);
             event.user(userSession.getUser()).session(userSession).success();
@@ -153,6 +158,8 @@ public class LogoutEndpoint {
             if (state != null) uriBuilder.queryParam(OIDCLoginProtocol.STATE_PARAM, state);
             return Response.status(302).location(uriBuilder.build()).build();
         } else {
+            // TODO Empty content with ok makes no sense. Should it display a page? Or use noContent?
+            session.getProvider(SecurityHeadersProvider.class).options().allowEmptyContentType();
             return Response.ok().build();
         }
     }
@@ -216,7 +223,7 @@ public class LogoutEndpoint {
             }
         }
 
-        return Cors.add(request, Response.noContent()).auth().allowedOrigins(session.getContext().getUri(), client).allowedMethods("POST").exposedHeaders(Cors.ACCESS_CONTROL_ALLOW_METHODS).build();
+        return Cors.add(request, Response.noContent()).auth().allowedOrigins(session, client).allowedMethods("POST").exposedHeaders(Cors.ACCESS_CONTROL_ALLOW_METHODS).build();
     }
 
     private void logout(UserSessionModel userSession, boolean offline) {
@@ -244,5 +251,15 @@ public class LogoutEndpoint {
         if (token.getIssuedAt() + 1 < userSession.getStarted()) {
             throw new OAuthErrorException(OAuthErrorException.INVALID_GRANT, "Refresh toked issued before the user session started");
         }
+    }
+
+    private Response initiateBrowserLogout(UserSessionModel userSession, String redirect, String state, String initiatingIdp ) {
+        if (redirect != null) userSession.setNote(OIDCLoginProtocol.LOGOUT_REDIRECT_URI, redirect);
+        if (state != null) userSession.setNote(OIDCLoginProtocol.LOGOUT_STATE_PARAM, state);
+        userSession.setNote(AuthenticationManager.KEYCLOAK_LOGOUT_PROTOCOL, OIDCLoginProtocol.LOGIN_PROTOCOL);
+        logger.debug("Initiating OIDC browser logout");
+        Response response =  AuthenticationManager.browserLogout(session, realm, userSession, session.getContext().getUri(), clientConnection, headers, initiatingIdp);
+        logger.debug("finishing OIDC browser logout");
+        return response;
     }
 }

@@ -44,6 +44,7 @@ import javax.persistence.criteria.Predicate;
 import javax.persistence.criteria.Root;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
@@ -51,6 +52,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.Objects;
+import java.util.stream.Stream;
 import javax.persistence.LockModeType;
 
 /**
@@ -71,6 +73,7 @@ public class UserAdapter implements UserModel, JpaModel<UserEntity> {
         this.session = session;
     }
 
+    @Override
     public UserEntity getEntity() {
         return user;
     }
@@ -113,43 +116,71 @@ public class UserAdapter implements UserModel, JpaModel<UserEntity> {
 
     @Override
     public void setSingleAttribute(String name, String value) {
-        String firstExistingAttrId = null;
-        List<UserAttributeEntity> toRemove = new ArrayList<>();
-        for (UserAttributeEntity attr : user.getAttributes()) {
-            if (attr.getName().equals(name)) {
-                if (firstExistingAttrId == null) {
-                    attr.setValue(value);
-                    firstExistingAttrId = attr.getId();
-                } else {
-                    toRemove.add(attr);
+        if (UserModel.FIRST_NAME.equals(name)) {
+            user.setFirstName(value);
+            return;
+        } else if (UserModel.LAST_NAME.equals(name)) {
+            user.setLastName(value);
+            return;
+        } else if (UserModel.EMAIL.equals(name)) {
+            setEmail(value);
+            return;
+        } else if (UserModel.USERNAME.equals(name)) {
+            setUsername(value);
+            return;
+        }
+        // Remove all existing
+        if (value == null) {
+            user.getAttributes().removeIf(a -> a.getName().equals(name));
+        } else {
+            String firstExistingAttrId = null;
+            List<UserAttributeEntity> toRemove = new ArrayList<>();
+            for (UserAttributeEntity attr : user.getAttributes()) {
+                if (attr.getName().equals(name)) {
+                    if (firstExistingAttrId == null) {
+                        attr.setValue(value);
+                        firstExistingAttrId = attr.getId();
+                    } else {
+                        toRemove.add(attr);
+                    }
                 }
             }
-        }
 
-        if (firstExistingAttrId != null) {
-            // Remove attributes through HQL to avoid StaleUpdateException
-            Query query = em.createNamedQuery("deleteUserAttributesByNameAndUserOtherThan");
-            query.setParameter("name", name);
-            query.setParameter("userId", user.getId());
-            query.setParameter("attrId", firstExistingAttrId);
-            int numUpdated = query.executeUpdate();
+            if (firstExistingAttrId != null) {
+                // Remove attributes through HQL to avoid StaleUpdateException
+                Query query = em.createNamedQuery("deleteUserAttributesByNameAndUserOtherThan");
+                query.setParameter("name", name);
+                query.setParameter("userId", user.getId());
+                query.setParameter("attrId", firstExistingAttrId);
+                int numUpdated = query.executeUpdate();
 
-            // Remove attribute from local entity
-            user.getAttributes().removeAll(toRemove);
-        } else {
-
-            persistAttributeValue(name, value);
+                // Remove attribute from local entity
+                user.getAttributes().removeAll(toRemove);
+            } else {
+                persistAttributeValue(name, value);
+            }
         }
     }
 
     @Override
     public void setAttribute(String name, List<String> values) {
+        if (UserModel.FIRST_NAME.equals(name)) {
+            user.setFirstName(values.get(0));
+            return;
+        } else if (UserModel.LAST_NAME.equals(name)) {
+            user.setLastName(values.get(0));
+            return;
+        } else if (UserModel.EMAIL.equals(name)) {
+            setEmail(values.get(0));
+            return;
+        } else if (UserModel.USERNAME.equals(name)) {
+            setUsername(values.get(0));
+            return;
+        }
         // Remove all existing
         removeAttribute(name);
-
-        // Put all new
-        for (String value : values) {
-            persistAttributeValue(name, value);
+        for (Iterator<String> it = values.stream().filter(Objects::nonNull).iterator(); it.hasNext();) {
+            persistAttributeValue(name, it.next());
         }
     }
 
@@ -165,24 +196,37 @@ public class UserAdapter implements UserModel, JpaModel<UserEntity> {
 
     @Override
     public void removeAttribute(String name) {
-        // KEYCLOAK-3296 : Remove attribute through HQL to avoid StaleUpdateException
-        Query query = em.createNamedQuery("deleteUserAttributesByNameAndUser");
-        query.setParameter("name", name);
-        query.setParameter("userId", user.getId());
-        int numUpdated = query.executeUpdate();
-
-        // KEYCLOAK-3494 : Also remove attributes from local user entity
         List<UserAttributeEntity> toRemove = new ArrayList<>();
         for (UserAttributeEntity attr : user.getAttributes()) {
             if (attr.getName().equals(name)) {
                 toRemove.add(attr);
             }
         }
+
+        if (toRemove.isEmpty()) {
+            return;
+        }
+
+        // KEYCLOAK-3296 : Remove attribute through HQL to avoid StaleUpdateException
+        Query query = em.createNamedQuery("deleteUserAttributesByNameAndUser");
+        query.setParameter("name", name);
+        query.setParameter("userId", user.getId());
+        query.executeUpdate();
+        // KEYCLOAK-3494 : Also remove attributes from local user entity
         user.getAttributes().removeAll(toRemove);
     }
 
     @Override
     public String getFirstAttribute(String name) {
+        if (UserModel.FIRST_NAME.equals(name)) {
+            return user.getFirstName();
+        } else if (UserModel.LAST_NAME.equals(name)) {
+            return user.getLastName();
+        } else if (UserModel.EMAIL.equals(name)) {
+            return user.getEmail();
+        } else if (UserModel.USERNAME.equals(name)) {
+            return user.getUsername();
+        }
         for (UserAttributeEntity attr : user.getAttributes()) {
             if (attr.getName().equals(name)) {
                 return attr.getValue();
@@ -193,6 +237,15 @@ public class UserAdapter implements UserModel, JpaModel<UserEntity> {
 
     @Override
     public List<String> getAttribute(String name) {
+        if (UserModel.FIRST_NAME.equals(name)) {
+            return Collections.singletonList(user.getFirstName());
+        } else if (UserModel.LAST_NAME.equals(name)) {
+            return Collections.singletonList(user.getLastName());
+        } else if (UserModel.EMAIL.equals(name)) {
+            return Collections.singletonList(user.getEmail());
+        } else if (UserModel.USERNAME.equals(name)) {
+            return Collections.singletonList(user.getUsername());
+        }
         List<String> result = new ArrayList<>();
         for (UserAttributeEntity attr : user.getAttributes()) {
             if (attr.getName().equals(name)) {
@@ -208,6 +261,10 @@ public class UserAdapter implements UserModel, JpaModel<UserEntity> {
         for (UserAttributeEntity attr : user.getAttributes()) {
             result.add(attr.getName(), attr.getValue());
         }
+        result.add(UserModel.FIRST_NAME, user.getFirstName());
+        result.add(UserModel.LAST_NAME, user.getLastName());
+        result.add(UserModel.EMAIL, user.getEmail());
+        result.add(UserModel.USERNAME, user.getUsername());
         return result;
     }
 

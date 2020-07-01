@@ -103,6 +103,13 @@ public class ClientAdapter implements ClientModel, CachedObject {
     }
 
     @Override
+    public void addClientScopes(Set<ClientScopeModel> clientScopes, boolean defaultScope) {
+        for (ClientScopeModel clientScope : clientScopes) {
+            addClientScope(clientScope, defaultScope);
+        }
+    }
+
+    @Override
     public void removeClientScope(ClientScopeModel clientScope) {
         getDelegateForUpdate();
         updated.removeClientScope(clientScope);
@@ -166,6 +173,16 @@ public class ClientAdapter implements ClientModel, CachedObject {
     public void setEnabled(boolean enabled) {
         getDelegateForUpdate();
         updated.setEnabled(enabled);
+    }
+
+    public boolean isAlwaysDisplayInConsole() {
+        if(isUpdated()) return updated.isAlwaysDisplayInConsole();
+        return cached.isAlwaysDisplayInConsole();
+    }
+
+    public void setAlwaysDisplayInConsole(boolean alwaysDisplayInConsole) {
+        getDelegateForUpdate();
+        updated.setAlwaysDisplayInConsole(alwaysDisplayInConsole);
     }
 
     @Override
@@ -238,7 +255,7 @@ public class ClientAdapter implements ClientModel, CachedObject {
 
     public Set<RoleModel> getScopeMappings() {
         if (isUpdated()) return updated.getScopeMappings();
-        Set<RoleModel> roles = new HashSet<RoleModel>();
+        Set<RoleModel> roles = new HashSet<>();
         for (String id : cached.getScope()) {
             roles.add(cacheSession.getRoleById(id, getRealm()));
 
@@ -259,7 +276,7 @@ public class ClientAdapter implements ClientModel, CachedObject {
     public Set<RoleModel> getRealmScopeMappings() {
         Set<RoleModel> roleMappings = getScopeMappings();
 
-        Set<RoleModel> appRoles = new HashSet<RoleModel>();
+        Set<RoleModel> appRoles = new HashSet<>();
         for (RoleModel role : roleMappings) {
             RoleContainerModel container = role.getContainer();
             if (container instanceof RealmModel) {
@@ -321,7 +338,7 @@ public class ClientAdapter implements ClientModel, CachedObject {
     @Override
     public Map<String, String> getAttributes() {
         if (isUpdated()) return updated.getAttributes();
-        Map<String, String> copy = new HashMap<String, String>();
+        Map<String, String> copy = new HashMap<>();
         copy.putAll(cached.getAttributes());
         return copy;
     }
@@ -349,7 +366,7 @@ public class ClientAdapter implements ClientModel, CachedObject {
     @Override
     public Map<String, String> getAuthenticationFlowBindingOverrides() {
         if (isUpdated()) return updated.getAuthenticationFlowBindingOverrides();
-        Map<String, String> copy = new HashMap<String, String>();
+        Map<String, String> copy = new HashMap<>();
         copy.putAll(cached.getAuthFlowBindings());
         return copy;
     }
@@ -601,6 +618,16 @@ public class ClientAdapter implements ClientModel, CachedObject {
     public Set<RoleModel> getRoles() {
         return cacheSession.getClientRoles(cachedRealm, this);
     }
+    
+    @Override
+    public Set<RoleModel> getRoles(Integer first, Integer max) {
+        return cacheSession.getClientRoles(cachedRealm, this, first, max);
+    }
+    
+    @Override
+    public Set<RoleModel> searchForRoles(String search, Integer first, Integer max) {
+        return cacheSession.searchForClientRoles(cachedRealm, this, search, first, max);
+    }
 
     @Override
     public int getNodeReRegistrationTimeout() {
@@ -655,7 +682,7 @@ public class ClientAdapter implements ClientModel, CachedObject {
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (o == null || !(o instanceof ClientModel)) return false;
+        if (!(o instanceof ClientModel)) return false;
 
         ClientModel that = (ClientModel) o;
         return that.getId().equals(getId());
@@ -665,5 +692,4 @@ public class ClientAdapter implements ClientModel, CachedObject {
     public int hashCode() {
         return getId().hashCode();
     }
-
 }

@@ -31,8 +31,8 @@ import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.testsuite.AbstractTestRealmKeycloakTest;
 import org.keycloak.testsuite.AssertEvents;
 import org.keycloak.testsuite.admin.ApiUtil;
-import org.keycloak.testsuite.arquillian.AuthServerTestEnricher;
-import org.keycloak.testsuite.arquillian.annotation.RestartContainer;
+import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
+import org.keycloak.testsuite.arquillian.annotation.EnableFeature;
 import org.keycloak.testsuite.updaters.ClientAttributeUpdater;
 import org.keycloak.testsuite.util.OAuthClient;
 import org.keycloak.testsuite.util.UserBuilder;
@@ -50,9 +50,12 @@ import java.util.Map;
 import static org.hamcrest.collection.IsIterableContainingInAnyOrder.containsInAnyOrder;
 import static org.junit.Assert.*;
 import static org.keycloak.common.Profile.Feature.OPENSHIFT_INTEGRATION;
-import static org.keycloak.testsuite.ProfileAssume.assumeFeatureEnabled;
+import static org.keycloak.testsuite.util.ServerURLs.getAuthServerContextRoot;
 
-@RestartContainer(enableFeatures = OPENSHIFT_INTEGRATION)
+import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.AuthServer;
+
+@AuthServerContainerExclude({AuthServer.REMOTE, AuthServer.QUARKUS})
+@EnableFeature(value = OPENSHIFT_INTEGRATION, skipRestart = true)
 public class OpenShiftTokenReviewEndpointTest extends AbstractTestRealmKeycloakTest {
 
     private static boolean flowConfigured;
@@ -86,8 +89,6 @@ public class OpenShiftTokenReviewEndpointTest extends AbstractTestRealmKeycloakT
 
     @Before
     public void enablePassthroughAuthenticator() {
-        assumeFeatureEnabled(OPENSHIFT_INTEGRATION);
-
         if (!flowConfigured) {
             HashMap<String, String> data = new HashMap<>();
             data.put("newName", "testsuite-client-dummy");
@@ -374,7 +375,7 @@ public class OpenShiftTokenReviewEndpointTest extends AbstractTestRealmKeycloakT
                 }
 
                 try (CloseableHttpClient client = HttpClientBuilder.create().build()) {
-                    String url = AuthServerTestEnricher.getAuthServerContextRoot() + "/auth/realms/" + realm + "/protocol/openid-connect/ext/openshift-token-review/" + clientId;
+                    String url = getAuthServerContextRoot() + "/auth/realms/" + realm + "/protocol/openid-connect/ext/openshift-token-review/" + clientId;
 
                     OpenShiftTokenReviewRequestRepresentation request = new OpenShiftTokenReviewRequestRepresentation();
                     OpenShiftTokenReviewRequestRepresentation.Spec spec = new OpenShiftTokenReviewRequestRepresentation.Spec();

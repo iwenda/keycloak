@@ -17,6 +17,7 @@
 
 package org.keycloak.testsuite.admin.group;
 
+import com.google.common.collect.Comparators;
 import org.junit.Assert;
 import org.junit.Test;
 import org.keycloak.admin.client.resource.GroupResource;
@@ -28,8 +29,6 @@ import org.keycloak.admin.client.resource.UsersResource;
 import org.keycloak.events.admin.OperationType;
 import org.keycloak.events.admin.ResourceType;
 import org.keycloak.models.Constants;
-import org.keycloak.models.UserModel;
-import org.keycloak.models.utils.RepresentationToModel;
 import org.keycloak.representations.AccessToken;
 import org.keycloak.representations.idm.ClientRepresentation;
 import org.keycloak.representations.idm.CredentialRepresentation;
@@ -39,6 +38,7 @@ import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.RoleRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.testsuite.admin.ApiUtil;
+import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
 import org.keycloak.testsuite.util.AdminEventPaths;
 import org.keycloak.testsuite.util.ClientBuilder;
 import org.keycloak.testsuite.util.RoleBuilder;
@@ -52,9 +52,13 @@ import javax.ws.rs.core.Response;
 import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import javax.ws.rs.ClientErrorException;
 import javax.ws.rs.core.Response.Status;
@@ -65,9 +69,16 @@ import org.junit.Rule;
 import org.junit.rules.ExpectedException;
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.models.AdminRoles;
+import org.keycloak.models.ModelDuplicateException;
+import org.keycloak.models.RealmModel;
+import org.keycloak.models.utils.KeycloakModelUtils;
 import static org.keycloak.testsuite.Assert.assertNames;
-import org.keycloak.testsuite.arquillian.AuthServerTestEnricher;
+import static org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.AuthServer.REMOTE;
+import static org.keycloak.testsuite.util.ServerURLs.getAuthServerContextRoot;
+
+import org.keycloak.testsuite.arquillian.annotation.UncaughtServerErrorExpected;
 import org.keycloak.testsuite.auth.page.AuthRealm;
+import org.keycloak.testsuite.runonserver.RunOnServerException;
 import org.keycloak.testsuite.util.GroupBuilder;
 
 /**
@@ -181,6 +192,112 @@ public class GroupTest extends AbstractGroupTest {
         response = realm.groups().group(topGroup.getId()).subGroup(anotherlevel2Group);
         response.close();
         assertEquals(409, response.getStatus()); // conflict status 409 - same name not allowed
+    }
+    
+    @Test
+    // KEYCLOAK-11412 Unintended Groups with same names
+    public void doNotAllowSameGroupNameAtSameLevelWhenUpdatingName() throws Exception {
+        RealmResource realm = adminClient.realms().realm("test");
+
+        GroupRepresentation topGroup = new GroupRepresentation();
+        topGroup.setName("top1");
+        topGroup = createGroup(realm, topGroup);
+
+        GroupRepresentation anotherTopGroup = new GroupRepresentation();
+        anotherTopGroup.setName("top2");
+        anotherTopGroup = createGroup(realm, anotherTopGroup);
+        
+        anotherTopGroup.setName("top1");
+        
+        try {
+            realm.groups().group(anotherTopGroup.getId()).update(anotherTopGroup);
+            Assert.fail("Expected ClientErrorException");
+        } catch (ClientErrorException e) {
+            // conflict status 409 - same name not allowed
+            assertEquals("HTTP 409 Conflict", e.getMessage());
+        }
+
+        GroupRepresentation level2Group = new GroupRepresentation();
+        level2Group.setName("level2-1");
+        addSubGroup(realm, topGroup, level2Group);
+
+        GroupRepresentation anotherlevel2Group = new GroupRepresentation();
+        anotherlevel2Group.setName("level2-2");
+        addSubGroup(realm, topGroup, anotherlevel2Group);
+
+        anotherlevel2Group.setName("level2-1");
+        
+        try {
+            realm.groups().group(anotherlevel2Group.getId()).update(anotherlevel2Group);
+            Assert.fail("Expected ClientErrorException");
+        } catch (ClientErrorException e) {
+            // conflict status 409 - same name not allowed
+            assertEquals("HTTP 409 Conflict", e.getMessage());
+        }  
+    }
+    
+    private void addSubGroup(RealmResource realm, GroupRepresentation parent, GroupRepresentation child) {
+        Response response = realm.groups().add(child);
+        child.setId(ApiUtil.getCreatedId(response));
+        response = realm.groups().group(parent.getId()).subGroup(child);
+        response.close();
+    }
+
+    @Test
+    public void allowSameGroupNameAtDifferentLevel() throws Exception {
+        RealmResource realm = adminClient.realms().realm("test");
+
+        // creating "/test-group"
+        GroupRepresentation topGroup = new GroupRepresentation();
+        topGroup.setName("test-group");
+        topGroup = createGroup(realm, topGroup);
+        getCleanup().addGroupId(topGroup.getId());
+
+        // creating "/test-group/test-group"
+        GroupRepresentation childGroup = new GroupRepresentation();
+        childGroup.setName("test-group");
+        try (Response response = realm.groups().group(topGroup.getId()).subGroup(childGroup)) {
+            assertEquals(201, response.getStatus());
+            getCleanup().addGroupId(ApiUtil.getCreatedId(response));
+        }
+
+        assertNotNull(realm.getGroupByPath("/test-group/test-group"));
+    }
+
+    @Test
+    public void doNotAllowSameGroupNameAtTopLevel() throws Exception {
+        RealmResource realm = adminClient.realms().realm("test");
+
+        // creating "/test-group"
+        GroupRepresentation topGroup = new GroupRepresentation();
+        topGroup.setName("test-group");
+        topGroup = createGroup(realm, topGroup);
+        getCleanup().addGroupId(topGroup.getId());
+
+        GroupRepresentation group2 = new GroupRepresentation();
+        group2.setName("test-group");
+        try (Response response = realm.groups().add(group2)) {
+            assertEquals(Status.CONFLICT.getStatusCode(), response.getStatus());
+        }
+    }
+
+    @Test
+    @UncaughtServerErrorExpected
+    @AuthServerContainerExclude(REMOTE)
+    public void doNotAllowSameGroupNameAtTopLevelInDatabase() throws Exception {
+        final String id = KeycloakModelUtils.generateId();
+        testingClient.server().run(session -> {
+            RealmModel realm = session.realms().getRealm("test");
+            realm.createGroup(id, "test-group");
+        });
+        getCleanup().addGroupId(id);
+        // unique key should work even in top groups
+        expectedException.expect(RunOnServerException.class);
+        expectedException.expectMessage(ModelDuplicateException.class.getName());
+        testingClient.server().run(session -> {
+            RealmModel realm = session.realms().getRealm("test");
+            realm.createGroup("test-group");
+        });
     }
 
     @Test
@@ -373,6 +490,45 @@ public class GroupTest extends AbstractGroupTest {
     }
 
     @Test
+    public void moveGroups() {
+        RealmResource realm = adminClient.realms().realm("test");
+
+        // Create 2 top level groups "mygroup1" and "mygroup2"
+        GroupRepresentation group = GroupBuilder.create()
+                .name("mygroup1")
+                .build();
+        GroupRepresentation group1 = createGroup(realm, group);
+
+        group = GroupBuilder.create()
+                .name("mygroup2")
+                .build();
+        GroupRepresentation group2 = createGroup(realm, group);
+
+        // Move "mygroup2" as child of "mygroup1" . Assert it was moved
+        Response response = realm.groups().group(group1.getId()).subGroup(group2);
+        Assert.assertEquals(204, response.getStatus());
+        response.close();
+
+        // Assert "mygroup2" was moved
+        group1 = realm.groups().group(group1.getId()).toRepresentation();
+        group2 = realm.groups().group(group2.getId()).toRepresentation();
+        assertNames(group1.getSubGroups(), "mygroup2");
+        Assert.assertEquals("/mygroup1/mygroup2", group2.getPath());
+
+
+        // Move "mygroup2" back under parent
+        response = realm.groups().add(group2);
+        Assert.assertEquals(204, response.getStatus());
+        response.close();
+
+        // Assert "mygroup2" was moved
+        group1 = realm.groups().group(group1.getId()).toRepresentation();
+        group2 = realm.groups().group(group2.getId()).toRepresentation();
+        assertTrue(group1.getSubGroups().isEmpty());
+        Assert.assertEquals("/mygroup2", group2.getPath());
+    }
+
+    @Test
     public void groupMembership() {
         RealmResource realm = adminClient.realms().realm("test");
 
@@ -543,7 +699,7 @@ public class GroupTest extends AbstractGroupTest {
         final String realmName = AuthRealm.MASTER;
         createUser(realmName, userName, "pwd");
 
-        try (Keycloak userClient = Keycloak.getInstance(AuthServerTestEnricher.getAuthServerContextRoot() + "/auth",
+        try (Keycloak userClient = Keycloak.getInstance(getAuthServerContextRoot() + "/auth",
           realmName, userName, "pwd", Constants.ADMIN_CLI_CLIENT_ID, TLSUtils.initializeTLS())) {
 
             expectedException.expect(ClientErrorException.class);
@@ -572,7 +728,7 @@ public class GroupTest extends AbstractGroupTest {
         RoleMappingResource mappings = realm.users().get(userId).roles();
         mappings.realmLevel().add(Collections.singletonList(adminRole));
 
-        try (Keycloak userClient = Keycloak.getInstance(AuthServerTestEnricher.getAuthServerContextRoot() + "/auth",
+        try (Keycloak userClient = Keycloak.getInstance(getAuthServerContextRoot() + "/auth",
           realmName, userName, "pwd", Constants.ADMIN_CLI_CLIENT_ID, TLSUtils.initializeTLS())) {
 
             assertThat(userClient.realms().findAll(),  // Any admin operation will do
@@ -605,7 +761,7 @@ public class GroupTest extends AbstractGroupTest {
 
             realm.users().get(userId).joinGroup(groupId);
         }
-        try (Keycloak userClient = Keycloak.getInstance(AuthServerTestEnricher.getAuthServerContextRoot() + "/auth",
+        try (Keycloak userClient = Keycloak.getInstance(getAuthServerContextRoot() + "/auth",
           realmName, userName, "pwd", Constants.ADMIN_CLI_CLIENT_ID, TLSUtils.initializeTLS())) {
 
             assertThat(userClient.realms().findAll(),  // Any admin operation will do
@@ -640,7 +796,7 @@ public class GroupTest extends AbstractGroupTest {
 
             mappings.realmLevel().add(Collections.singletonList(adminRole));
         }
-        try (Keycloak userClient = Keycloak.getInstance(AuthServerTestEnricher.getAuthServerContextRoot() + "/auth",
+        try (Keycloak userClient = Keycloak.getInstance(getAuthServerContextRoot() + "/auth",
           realmName, userName, "pwd", Constants.ADMIN_CLI_CLIENT_ID, TLSUtils.initializeTLS())) {
 
             assertThat(userClient.realms().findAll(),  // Any admin operation will do
@@ -670,6 +826,44 @@ public class GroupTest extends AbstractGroupTest {
             assertEquals(110, group.members(0, 1000).size());
             assertEquals(110, group.members(-1, -2).size());
         }
+    }
+    
+    @Test
+    public void getGroupsWithFullRepresentation() {
+        RealmResource realm = adminClient.realms().realm("test");
+        GroupsResource groupsResource = adminClient.realms().realm("test").groups();
+        
+        GroupRepresentation group = new GroupRepresentation();
+        group.setName("groupWithAttribute");
+        
+        Map<String, List<String>> attributes = new HashMap<String, List<String>>();
+        attributes.put("attribute1", Arrays.asList("attribute1","attribute2"));
+		group.setAttributes(attributes);
+        group = createGroup(realm, group);
+        
+        List<GroupRepresentation> groups = groupsResource.groups("groupWithAttribute", 0, 20, false);
+        
+        assertFalse(groups.isEmpty());
+        assertTrue(groups.get(0).getAttributes().containsKey("attribute1"));
+    }
+    
+    @Test
+    public void getGroupsWithBriefRepresentation() {
+        RealmResource realm = adminClient.realms().realm("test");
+        GroupsResource groupsResource = adminClient.realms().realm("test").groups();
+        
+        GroupRepresentation group = new GroupRepresentation();
+        group.setName("groupWithAttribute");
+        
+        Map<String, List<String>> attributes = new HashMap<String, List<String>>();
+        attributes.put("attribute1", Arrays.asList("attribute1","attribute2"));
+		group.setAttributes(attributes);
+        group = createGroup(realm, group);
+        
+        List<GroupRepresentation> groups = groupsResource.groups("groupWithAttribute", 0, 20);
+        
+        assertFalse(groups.isEmpty());
+        assertNull(groups.get(0).getAttributes());
     }
 
     @Test
@@ -725,6 +919,58 @@ public class GroupTest extends AbstractGroupTest {
 
         assertEquals(new Long(allGroups.size()), realm.groups().count(true).get("count"));
         assertEquals(new Long(allGroups.size() + 1), realm.groups().count(false).get("count"));
+    }
+
+    @Test
+    public void orderGroupsByName() throws Exception {
+        RealmResource realm = this.adminClient.realms().realm("test");
+
+        // Clean up all test groups
+        for (GroupRepresentation group : realm.groups().groups()) {
+            GroupResource resource = realm.groups().group(group.getId());
+            resource.remove();
+            assertAdminEvents.assertEvent("test", OperationType.DELETE, AdminEventPaths.groupPath(group.getId()), ResourceType.GROUP);
+        }
+
+        // Create two pages worth of groups in a random order
+        List<GroupRepresentation> testGroups = new ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+            GroupRepresentation group = new GroupRepresentation();
+            group.setName("group" + i);
+            testGroups.add(group);
+        }
+
+        Collections.shuffle(testGroups);
+
+        for (GroupRepresentation group : testGroups) {
+            group = createGroup(realm, group);
+        }
+
+        // Groups should be ordered by name
+        Comparator<GroupRepresentation> compareByName = Comparator.comparing(GroupRepresentation::getName);
+
+        // Assert that all groups are returned in order
+        List<GroupRepresentation> allGroups = realm.groups().groups();
+        assertEquals(40, allGroups.size());
+        assertTrue(Comparators.isInStrictOrder(allGroups, compareByName));
+
+        // Assert that pagination results are returned in order
+        List<GroupRepresentation> firstPage = realm.groups().groups(0, 20);
+        assertEquals(20, firstPage.size());
+        assertTrue(Comparators.isInStrictOrder(firstPage, compareByName));
+
+        List<GroupRepresentation> secondPage = realm.groups().groups(20, 20);
+        assertEquals(20, secondPage.size());
+        assertTrue(Comparators.isInStrictOrder(secondPage, compareByName));
+
+        // Check that the ordering of groups across multiple pages is correct
+        // Since the individual pages are ordered it is sufficient to compare 
+        // every group from the first page to the first group of the second page
+        GroupRepresentation firstGroupOnSecondPage = secondPage.get(0);
+        for (GroupRepresentation firstPageGroup : firstPage) {
+            int comparisonResult = compareByName.compare(firstPageGroup, firstGroupOnSecondPage);
+            assertTrue(comparisonResult < 0);
+        }
     }
 
     @Test

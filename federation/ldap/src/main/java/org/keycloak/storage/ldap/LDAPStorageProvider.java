@@ -35,24 +35,22 @@ import org.keycloak.credential.CredentialAuthentication;
 import org.keycloak.credential.CredentialInput;
 import org.keycloak.credential.CredentialInputUpdater;
 import org.keycloak.credential.CredentialInputValidator;
-import org.keycloak.credential.CredentialModel;
 import org.keycloak.federation.kerberos.impl.KerberosUsernamePasswordAuthenticator;
 import org.keycloak.federation.kerberos.impl.SPNEGOAuthenticator;
 import org.keycloak.models.*;
 import org.keycloak.models.cache.CachedUserModel;
+import org.keycloak.models.credential.PasswordCredentialModel;
 import org.keycloak.models.utils.DefaultRoles;
 import org.keycloak.models.utils.ReadOnlyUserModelDelegate;
 import org.keycloak.policy.PasswordPolicyManagerProvider;
 import org.keycloak.policy.PolicyError;
 import org.keycloak.models.cache.UserCache;
-import org.keycloak.models.credential.PasswordUserCredentialModel;
-import org.keycloak.models.utils.KeycloakModelUtils;
-import org.keycloak.models.utils.ReadOnlyUserModelDelegate;
 import org.keycloak.storage.ReadOnlyException;
 import org.keycloak.storage.StorageId;
 import org.keycloak.storage.UserStorageProvider;
 import org.keycloak.storage.UserStorageProviderModel;
 import org.keycloak.storage.adapter.InMemoryUserAdapter;
+import org.keycloak.storage.adapter.UpdateOnlyChangeUserModelDelegate;
 import org.keycloak.storage.ldap.idm.model.LDAPObject;
 import org.keycloak.storage.ldap.idm.query.Condition;
 import org.keycloak.storage.ldap.idm.query.EscapeStrategy;
@@ -60,10 +58,10 @@ import org.keycloak.storage.ldap.idm.query.internal.LDAPQuery;
 import org.keycloak.storage.ldap.idm.query.internal.LDAPQueryConditionsBuilder;
 import org.keycloak.storage.ldap.idm.store.ldap.LDAPIdentityStore;
 import org.keycloak.storage.ldap.kerberos.LDAPProviderKerberosConfig;
-import org.keycloak.storage.ldap.mappers.LDAPOperationDecorator;
 import org.keycloak.storage.ldap.mappers.LDAPStorageMapper;
 import org.keycloak.storage.ldap.mappers.LDAPStorageMapperManager;
 import org.keycloak.storage.ldap.mappers.PasswordUpdateCallback;
+import org.keycloak.storage.ldap.mappers.LDAPOperationDecorator;
 import org.keycloak.storage.user.ImportedUserValidation;
 import org.keycloak.storage.user.UserLookupProvider;
 import org.keycloak.storage.user.UserQueryProvider;
@@ -110,7 +108,7 @@ public class LDAPStorageProvider implements UserStorageProvider,
         this.mapperManager = new LDAPStorageMapperManager(this);
         this.userManager = new LDAPStorageUserManager(this);
 
-        supportedCredentialTypes.add(UserCredentialModel.PASSWORD);
+        supportedCredentialTypes.add(PasswordCredentialModel.TYPE);
         if (kerberosConfig.isAllowKerberosAuthentication()) {
             supportedCredentialTypes.add(UserCredentialModel.KERBEROS);
         }
@@ -152,10 +150,10 @@ public class LDAPStorageProvider implements UserStorageProvider,
             return null;
         }
 
-        return proxy(realm, local, ldapObject);
+        return proxy(realm, local, ldapObject, false);
     }
 
-    protected UserModel proxy(RealmModel realm, UserModel local, LDAPObject ldapObject) {
+    protected UserModel proxy(RealmModel realm, UserModel local, LDAPObject ldapObject, boolean newUser) {
         UserModel existing = userManager.getManagedProxiedUser(local.getId());
         if (existing != null) {
             return existing;
@@ -177,17 +175,17 @@ public class LDAPStorageProvider implements UserStorageProvider,
 
         switch (editMode) {
             case READ_ONLY:
-                if (model.isImportEnabled()) {
-                    proxied = new ReadonlyLDAPUserModelDelegate(local, this);
-                } else {
                     proxied = new ReadOnlyUserModelDelegate(local);
-                }
                 break;
             case WRITABLE:
-                proxied = new WritableLDAPUserModelDelegate(local, this, ldapObject);
-                break;
             case UNSYNCED:
-                proxied = new UnsyncedLDAPUserModelDelegate(local, this);
+                // Any attempt to write data, which are not supported by the LDAP schema, should fail
+                // This check is skipped when register new user as there are many "generic" attributes always written (EG. enabled, emailVerified) and those are usually unsupported by LDAP schema
+                if (!model.isImportEnabled() && !newUser) {
+                    UserModel readOnlyDelegate = new ReadOnlyUserModelDelegate(local, ModelException::new);
+                    proxied = new LDAPWritesOnlyUserModelDelegate(readOnlyDelegate, this);
+                }
+                break;
         }
 
         List<ComponentModel> mappers = realm.getComponents(model.getId(), LDAPStorageMapper.class.getName());
@@ -195,6 +193,10 @@ public class LDAPStorageProvider implements UserStorageProvider,
         for (ComponentModel mapperModel : sortedMappers) {
             LDAPStorageMapper ldapMapper = mapperManager.getMapper(mapperModel);
             proxied = ldapMapper.proxy(ldapObject, proxied, realm);
+        }
+
+        if (!model.isImportEnabled()) {
+            proxied = new UpdateOnlyChangeUserModelDelegate(proxied);
         }
 
         userManager.setManagedProxiedUser(proxied, ldapObject);
@@ -218,7 +220,7 @@ public class LDAPStorageProvider implements UserStorageProvider,
 
     @Override
     public boolean supportsCredentialAuthenticationFor(String type) {
-        return type.equals(CredentialModel.KERBEROS) && kerberosConfig.isAllowKerberosAuthentication();
+        return type.equals(UserCredentialModel.KERBEROS) && kerberosConfig.isAllowKerberosAuthentication();
     }
 
     @Override
@@ -239,9 +241,12 @@ public class LDAPStorageProvider implements UserStorageProvider,
 
              for (LDAPObject ldapUser : ldapObjects) {
                  String ldapUsername = LDAPUtils.getUsername(ldapUser, this.ldapIdentityStore.getConfig());
-                 if (session.userLocalStorage().getUserByUsername(ldapUsername, realm) == null) {
+                 UserModel localUser = session.userLocalStorage().getUserByUsername(ldapUsername, realm);
+                 if (localUser == null) {
                      UserModel imported = importUserFromLDAP(session, realm, ldapUser);
                      searchResults.add(imported);
+                 } else {
+                     searchResults.add(proxy(realm, localUser, ldapUser, false));
                  }
              }
 
@@ -272,7 +277,7 @@ public class LDAPStorageProvider implements UserStorageProvider,
         user.setSingleAttribute(LDAPConstants.LDAP_ENTRY_DN, ldapUser.getDn().toString());
 
         // Add the user to the default groups and add default required actions
-        UserModel proxy = proxy(realm, user, ldapUser);
+        UserModel proxy = proxy(realm, user, ldapUser, true);
         DefaultRoles.addDefaultRoles(realm, proxy);
 
         for (GroupModel g : realm.getDefaultGroups()) {
@@ -338,19 +343,7 @@ public class LDAPStorageProvider implements UserStorageProvider,
     @Override
     public List<UserModel> searchForUser(String search, RealmModel realm, int firstResult, int maxResults) {
         Map<String, String> attributes = new HashMap<String, String>();
-        int spaceIndex = search.lastIndexOf(' ');
-        if (spaceIndex > -1) {
-            String firstName = search.substring(0, spaceIndex).trim();
-            String lastName = search.substring(spaceIndex).trim();
-            attributes.put(UserModel.FIRST_NAME, firstName);
-            attributes.put(UserModel.LAST_NAME, lastName);
-        } else if (search.indexOf('@') > -1) {
-            attributes.put(UserModel.USERNAME, search.trim().toLowerCase());
-            attributes.put(UserModel.EMAIL, search.trim().toLowerCase());
-        } else {
-            attributes.put(UserModel.LAST_NAME, search.trim());
-            attributes.put(UserModel.USERNAME, search.trim().toLowerCase());
-        }
+        attributes.put(UserModel.SEARCH,search);
         return searchForUser(attributes, realm, firstResult, maxResults);
     }
 
@@ -361,6 +354,23 @@ public class LDAPStorageProvider implements UserStorageProvider,
 
     @Override
     public List<UserModel> searchForUser(Map<String, String> params, RealmModel realm, int firstResult, int maxResults) {
+        String search = params.get(UserModel.SEARCH);
+        if(search!=null) {
+            int spaceIndex = search.lastIndexOf(' ');
+            if (spaceIndex > -1) {
+                String firstName = search.substring(0, spaceIndex).trim();
+                String lastName = search.substring(spaceIndex).trim();
+                params.put(UserModel.FIRST_NAME, firstName);
+                params.put(UserModel.LAST_NAME, lastName);
+            } else if (search.indexOf('@') > -1) {
+                params.put(UserModel.USERNAME, search.trim().toLowerCase());
+                params.put(UserModel.EMAIL, search.trim().toLowerCase());
+            } else {
+                params.put(UserModel.LAST_NAME, search.trim());
+                params.put(UserModel.USERNAME, search.trim().toLowerCase());
+            }
+        }
+
         List<UserModel> searchResults =new LinkedList<UserModel>();
 
         List<LDAPObject> ldapUsers = searchLDAP(realm, params, maxResults + firstResult);
@@ -524,11 +534,12 @@ public class LDAPStorageProvider implements UserStorageProvider,
         if (model.isImportEnabled()) imported.setFederationLink(model.getId());
         imported.setSingleAttribute(LDAPConstants.LDAP_ID, ldapUser.getUuid());
         imported.setSingleAttribute(LDAPConstants.LDAP_ENTRY_DN, userDN);
-
-
+        if(getLdapIdentityStore().getConfig().isTrustEmail()){
+            imported.setEmailVerified(true);
+        }
         logger.debugf("Imported new user from LDAP to Keycloak DB. Username: [%s], Email: [%s], LDAP_ID: [%s], LDAP Entry DN: [%s]", imported.getUsername(), imported.getEmail(),
                 ldapUser.getUuid(), userDN);
-        UserModel proxy = proxy(realm, imported, ldapUser);
+        UserModel proxy = proxy(realm, imported, ldapUser, false);
         return proxy;
     }
 
@@ -559,7 +570,9 @@ public class LDAPStorageProvider implements UserStorageProvider,
         if (user != null) {
             LDAPUtils.checkUuid(ldapUser, ldapIdentityStore.getConfig());
             // If email attribute mapper is set to "Always Read Value From LDAP" the user may be in Keycloak DB with an old email address
-            if (ldapUser.getUuid().equals(user.getFirstAttribute(LDAPConstants.LDAP_ID))) return user;
+            if (ldapUser.getUuid().equals(user.getFirstAttribute(LDAPConstants.LDAP_ID))) {
+                return proxy(realm, user, ldapUser, false);
+            }
             throw new ModelDuplicateException("User with username '" + ldapUsername + "' already exists in Keycloak. It conflicts with LDAP user with email '" + email + "'");
         }
 
@@ -612,14 +625,13 @@ public class LDAPStorageProvider implements UserStorageProvider,
 
     @Override
     public boolean updateCredential(RealmModel realm, UserModel user, CredentialInput input) {
-        if (!CredentialModel.PASSWORD.equals(input.getType()) || ! (input instanceof PasswordUserCredentialModel)) return false;
+        if (!PasswordCredentialModel.TYPE.equals(input.getType()) || ! (input instanceof UserCredentialModel)) return false;
         if (editMode == UserStorageProvider.EditMode.READ_ONLY) {
             throw new ReadOnlyException("Federated storage is not writable");
 
         } else if (editMode == UserStorageProvider.EditMode.WRITABLE) {
             LDAPIdentityStore ldapIdentityStore = getLdapIdentityStore();
-            PasswordUserCredentialModel cred = (PasswordUserCredentialModel)input;
-            String password = cred.getValue();
+            String password = input.getChallengeResponse();
             LDAPObject ldapUser = loadAndValidateUser(realm, user);
             if (ldapIdentityStore.getConfig().isValidatePasswordPolicy()) {
 		PolicyError error = session.getProvider(PasswordPolicyManagerProvider.class).validate(realm, user, password);
@@ -628,16 +640,16 @@ public class LDAPStorageProvider implements UserStorageProvider,
             try {
                 LDAPOperationDecorator operationDecorator = null;
                 if (updater != null) {
-                    operationDecorator = updater.beforePasswordUpdate(user, ldapUser, cred);
+                    operationDecorator = updater.beforePasswordUpdate(user, ldapUser, (UserCredentialModel)input);
                 }
 
                 ldapIdentityStore.updatePassword(ldapUser, password, operationDecorator);
 
-                if (updater != null) updater.passwordUpdated(user, ldapUser, cred);
+                if (updater != null) updater.passwordUpdated(user, ldapUser, (UserCredentialModel)input);
                 return true;
             } catch (ModelException me) {
                 if (updater != null) {
-                    updater.passwordUpdateFailed(user, ldapUser, cred, me);
+                    updater.passwordUpdateFailed(user, ldapUser, (UserCredentialModel)input, me);
                     return false;
                 } else {
                     throw me;
@@ -677,8 +689,8 @@ public class LDAPStorageProvider implements UserStorageProvider,
     @Override
     public boolean isValid(RealmModel realm, UserModel user, CredentialInput input) {
         if (!(input instanceof UserCredentialModel)) return false;
-        if (input.getType().equals(UserCredentialModel.PASSWORD) && !session.userCredentialManager().isConfiguredLocally(realm, user, UserCredentialModel.PASSWORD)) {
-            return validPassword(realm, user, ((UserCredentialModel)input).getValue());
+        if (input.getType().equals(PasswordCredentialModel.TYPE) && !session.userCredentialManager().isConfiguredLocally(realm, user, PasswordCredentialModel.TYPE)) {
+            return validPassword(realm, user, input.getChallengeResponse());
         } else {
             return false; // invalid cred type
         }
@@ -690,7 +702,7 @@ public class LDAPStorageProvider implements UserStorageProvider,
         UserCredentialModel credential = (UserCredentialModel)cred;
         if (credential.getType().equals(UserCredentialModel.KERBEROS)) {
             if (kerberosConfig.isAllowKerberosAuthentication()) {
-                String spnegoToken = credential.getValue();
+                String spnegoToken = credential.getChallengeResponse();
                 SPNEGOAuthenticator spnegoAuthenticator = factory.createSPNEGOAuthenticator(spnegoToken, kerberosConfig);
 
                 spnegoAuthenticator.authenticate();
@@ -714,9 +726,14 @@ public class LDAPStorageProvider implements UserStorageProvider,
 
                         return new CredentialValidationOutput(user, CredentialValidationOutput.Status.AUTHENTICATED, state);
                     }
-                }  else {
+                }  else if (spnegoAuthenticator.getResponseToken() != null) {
+                    // Case when SPNEGO handshake requires multiple steps
+                    logger.tracef("SPNEGO Handshake will continue");
                     state.put(KerberosConstants.RESPONSE_TOKEN, spnegoAuthenticator.getResponseToken());
                     return new CredentialValidationOutput(null, CredentialValidationOutput.Status.CONTINUE, state);
+                } else {
+                    logger.tracef("SPNEGO Handshake not successful");
+                    return CredentialValidationOutput.failed();
                 }
             }
         }
@@ -745,7 +762,7 @@ public class LDAPStorageProvider implements UserStorageProvider,
             } else {
                 LDAPObject ldapObject = loadAndValidateUser(realm, user);
                 if (ldapObject != null) {
-                    return proxy(realm, user, ldapObject);
+                    return proxy(realm, user, ldapObject, false);
                 } else {
                     logger.warnf("User with username [%s] aready exists and is linked to provider [%s] but is not valid. Stale LDAP_ID on local user is: %s",
                             username,  model.getName(), user.getFirstAttribute(LDAPConstants.LDAP_ID));

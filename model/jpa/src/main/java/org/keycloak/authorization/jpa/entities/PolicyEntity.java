@@ -18,10 +18,7 @@
 
 package org.keycloak.authorization.jpa.entities;
 
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 import javax.persistence.Access;
 import javax.persistence.AccessType;
@@ -56,10 +53,10 @@ import org.keycloak.representations.idm.authorization.Logic;
         {
                 @NamedQuery(name="findPolicyIdByServerId", query="select p.id from PolicyEntity p where  p.resourceServer.id = :serverId "),
                 @NamedQuery(name="findPolicyIdByName", query="select p from PolicyEntity p left join fetch p.associatedPolicies a where  p.resourceServer.id = :serverId  and p.name = :name"),
-                @NamedQuery(name="findPolicyIdByResource", query="select p from PolicyEntity p inner join fetch p.resources r left join fetch p.scopes s inner join fetch p.associatedPolicies a where p.resourceServer.id = :serverId and (r.resourceServer.id = :serverId and r.id = :resourceId)"),
-                @NamedQuery(name="findPolicyIdByScope", query="select pe from PolicyEntity pe left join fetch pe.resources r inner join fetch pe.scopes s inner join fetch pe.associatedPolicies a where pe.resourceServer.id = :serverId and exists (select p.id from ScopeEntity s inner join s.policies p where s.resourceServer.id = :serverId and (p.resourceServer.id = :serverId and p.type = 'scope' and s.id in (:scopeIds) and p.id = pe.id))"),
-                @NamedQuery(name="findPolicyIdByResourceScope", query="select pe from PolicyEntity pe inner join fetch pe.resources r inner join fetch pe.scopes s inner join fetch pe.associatedPolicies a where pe.resourceServer.id = :serverId and exists (select p.id from ScopeEntity s inner join s.policies p where s.resourceServer.id = :serverId and (p.resourceServer.id = :serverId and p.type = 'scope' and s.id in (:scopeIds) and p.id = pe.id)) and exists (select p.id from ResourceEntity r inner join r.policies p where r.resourceServer.id = :serverId and (p.resourceServer.id = :serverId and p.id = pe.id and p.type = 'scope' and r.id in (:resourceId)))"),
-                @NamedQuery(name="findPolicyIdByNullResourceScope", query="select pe from PolicyEntity pe left join fetch pe.resources r inner join fetch pe.scopes s inner join fetch pe.associatedPolicies a where pe.resourceServer.id = :serverId and exists (select p.id from ScopeEntity s inner join s.policies p where s.resourceServer.id = :serverId and (p.resourceServer.id = :serverId and p.id = pe.id and p.type = 'scope' and s.id in (:scopeIds))) and pe.resources is empty"),
+                @NamedQuery(name="findPolicyIdByResource", query="select p from PolicyEntity p inner join p.resources r inner join fetch p.associatedPolicies a where p.resourceServer.id = :serverId and (r.resourceServer.id = :serverId and r.id = :resourceId)"),
+                @NamedQuery(name="findPolicyIdByScope", query="select pe from PolicyEntity pe inner join pe.scopes s inner join fetch pe.associatedPolicies a where pe.resourceServer.id = :serverId and exists (select p.id from ScopeEntity s inner join s.policies p where s.resourceServer.id = :serverId and (p.resourceServer.id = :serverId and p.type = 'scope' and s.id in (:scopeIds) and p.id = pe.id))"),
+                @NamedQuery(name="findPolicyIdByResourceScope", query="select pe from PolicyEntity pe inner join pe.resources r inner join pe.scopes s inner join fetch pe.associatedPolicies a where pe.resourceServer.id = :serverId and exists (select p.id from ScopeEntity s inner join s.policies p where s.resourceServer.id = :serverId and (p.resourceServer.id = :serverId and p.type = 'scope' and s.id in (:scopeIds) and p.id = pe.id)) and exists (select p.id from ResourceEntity r inner join r.policies p where r.resourceServer.id = :serverId and (p.resourceServer.id = :serverId and p.id = pe.id and p.type = 'scope' and r.id in (:resourceId)))"),
+                @NamedQuery(name="findPolicyIdByNullResourceScope", query="select pe from PolicyEntity pe left join fetch pe.config c inner join pe.scopes s inner join fetch pe.associatedPolicies a where pe.resourceServer.id = :serverId and exists (select p.id from ScopeEntity s inner join s.policies p where s.resourceServer.id = :serverId and (p.resourceServer.id = :serverId and p.id = pe.id and p.type = 'scope' and s.id in (:scopeIds))) and pe.resources is empty and not exists (select pec from pe.config pec where KEY(pec) = 'defaultResourceType')"),
                 @NamedQuery(name="findPolicyIdByType", query="select p.id from PolicyEntity p where p.resourceServer.id = :serverId and p.type = :type"),
                 @NamedQuery(name="findPolicyIdByResourceType", query="select p from PolicyEntity p inner join p.config c inner join fetch p.associatedPolicies a where p.resourceServer.id = :serverId and KEY(c) = 'defaultResourceType' and c like :type"),
                 @NamedQuery(name="findPolicyIdByDependentPolices", query="select p.id from PolicyEntity p inner join p.associatedPolicies ap where p.resourceServer.id = :serverId and (ap.resourceServer.id = :serverId and ap.id = :policyId)"),
@@ -95,7 +92,7 @@ public class PolicyEntity {
     @MapKeyColumn(name = "NAME")
     @Column(name = "VALUE", columnDefinition = "TEXT")
     @CollectionTable(name = "POLICY_CONFIG", joinColumns = {@JoinColumn(name = "POLICY_ID")})
-    private Map<String, String> config = new HashMap();
+    private Map<String, String> config;
 
     @ManyToOne(optional = false, fetch = FetchType.LAZY)
     @JoinColumn(name = "RESOURCE_SERVER_ID")
@@ -103,15 +100,15 @@ public class PolicyEntity {
 
     @OneToMany(fetch = FetchType.LAZY, cascade = {})
     @JoinTable(name = "ASSOCIATED_POLICY", joinColumns = @JoinColumn(name = "POLICY_ID"), inverseJoinColumns = @JoinColumn(name = "ASSOCIATED_POLICY_ID"))
-    private Set<PolicyEntity> associatedPolicies = new HashSet<>();
+    private Set<PolicyEntity> associatedPolicies;
 
     @OneToMany(fetch = FetchType.LAZY, cascade = {})
     @JoinTable(name = "RESOURCE_POLICY", joinColumns = @JoinColumn(name = "POLICY_ID"), inverseJoinColumns = @JoinColumn(name = "RESOURCE_ID"))
-    private Set<ResourceEntity> resources = new HashSet<>();
+    private Set<ResourceEntity> resources;
 
     @OneToMany(fetch = FetchType.LAZY, cascade = {})
     @JoinTable(name = "SCOPE_POLICY", joinColumns = @JoinColumn(name = "POLICY_ID"), inverseJoinColumns = @JoinColumn(name = "SCOPE_ID"))
-    private Set<ScopeEntity> scopes = new HashSet<>();
+    private Set<ScopeEntity> scopes;
 
     @Column(name = "OWNER")
     private String owner;
@@ -149,6 +146,9 @@ public class PolicyEntity {
     }
 
     public Map<String, String> getConfig() {
+        if (config == null) {
+            config = new HashMap<>();
+        }
         return this.config;
     }
 
@@ -181,6 +181,9 @@ public class PolicyEntity {
     }
 
     public Set<ResourceEntity> getResources() {
+        if (resources == null) {
+            resources = new HashSet<>();
+        }
         return this.resources;
     }
 
@@ -189,6 +192,9 @@ public class PolicyEntity {
     }
 
     public Set<ScopeEntity> getScopes() {
+        if (scopes == null) {
+            scopes = new HashSet<>();
+        }
         return this.scopes;
     }
 
@@ -197,6 +203,9 @@ public class PolicyEntity {
     }
 
     public Set<PolicyEntity> getAssociatedPolicies() {
+        if (associatedPolicies == null) {
+            associatedPolicies = new HashSet<>();
+        }
         return associatedPolicies;
     }
 

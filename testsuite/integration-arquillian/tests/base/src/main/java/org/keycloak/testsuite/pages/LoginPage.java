@@ -35,7 +35,7 @@ public class LoginPage extends LanguageComboboxAwarePage {
     protected OAuthClient oauth;
 
     @FindBy(id = "username")
-    private WebElement usernameInput;
+    protected WebElement usernameInput;
 
     @FindBy(id = "password")
     private WebElement passwordInput;
@@ -47,7 +47,7 @@ public class LoginPage extends LanguageComboboxAwarePage {
     private WebElement rememberMe;
 
     @FindBy(name = "login")
-    private WebElement submitButton;
+    protected WebElement submitButton;
 
     @FindBy(name = "cancel")
     private WebElement cancelButton;
@@ -85,26 +85,26 @@ public class LoginPage extends LanguageComboboxAwarePage {
         passwordInput.clear();
         passwordInput.sendKeys(password);
 
-        submitButton.click();
+        clickLink(submitButton);
     }
 
     public void login(String password) {
         passwordInput.clear();
         passwordInput.sendKeys(password);
 
-        submitButton.click();
+        clickLink(submitButton);
     }
 
     public void missingPassword(String username) {
         usernameInput.clear();
         usernameInput.sendKeys(username);
         passwordInput.clear();
-        submitButton.click();
+        clickLink(submitButton);
 
     }
     public void missingUsername() {
         usernameInput.clear();
-        submitButton.click();
+        clickLink(submitButton);
 
     }
 
@@ -164,11 +164,11 @@ public class LoginPage extends LanguageComboboxAwarePage {
     }
 
     public void resetPassword() {
-        resetPasswordLink.click();
+        clickLink(resetPasswordLink);
     }
 
     public void recoverUsername() {
-        recoverUsernameLink.click();
+        clickLink(recoverUsernameLink);
     }
 
     public void setRememberMe(boolean enable) {

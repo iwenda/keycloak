@@ -5,7 +5,7 @@
     <parent>
         <artifactId>integration-arquillian-tests-other</artifactId>
         <groupId>org.keycloak.testsuite</groupId>
-        <version>8.0.0-SNAPSHOT</version>
+        <version>11.0.0-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
@@ -15,7 +15,7 @@
         <adapter.container>tomcat</adapter.container>
 
         <maven.settings.file/>
-        <springboot.version.option>-Dspringboot15</springboot.version.option>
+        <springboot.version.option>1.5</springboot.version.option>
 
         <app.server.debug.port>5006</app.server.debug.port>
         <app.server.debug.suspend>n</app.server.debug.suspend>
@@ -32,9 +32,9 @@
             <version>${project.version}</version>
         </dependency>
         <dependency>
-            <groupId>org.assertj</groupId>
-            <artifactId>assertj-core</artifactId>
-            <version>3.11.1</version>
+            <groupId>org.hamcrest</groupId>
+            <artifactId>hamcrest-all</artifactId>
+            <scope>compile</scope>
         </dependency>
     </dependencies>
 
@@ -73,7 +73,8 @@
                                         <argument>-B</argument>
                                         <argument>-Pspring-boot-adapter-${adapter.container}</argument>
                                         <argument>-Dmaven.repo.local=${settings.localRepository}</argument>
-                                        <argument>${springboot.version.option}</argument>
+                                        <argument>-Dspringboot-version=${springboot.version.option}</argument>
+                                        <argument>-Dinsecure.repositories=WARN</argument>
                                     </arguments>
                                 </configuration>
                             </execution>
@@ -94,9 +95,10 @@
                                         <argument>-B</argument>
                                         <argument>-Pspring-boot-adapter-${adapter.container}</argument>
                                         <argument>-Dmaven.repo.local=${settings.localRepository}</argument>
-                                        <argument>${springboot.version.option}</argument>
+                                        <argument>-Dspringboot-version=${springboot.version.option}</argument>
                                         <argument>-Dapp.server.debug.port=${app.server.debug.port}</argument>
                                         <argument>-Dapp.server.debug.suspend=${app.server.debug.suspend}</argument>
+                                        <argument>-Dinsecure.repositories=WARN</argument>
                                     </arguments>
                                 </configuration>
                             </execution>
@@ -153,7 +155,8 @@
                                         <argument>-B</argument>
                                         <argument>-Pspring-boot-adapter-${adapter.container}</argument>
                                         <argument>-Dmaven.repo.local=${settings.localRepository}</argument>
-                                        <argument>${springboot.version.option}</argument>
+                                        <argument>-Dspringboot-version=${springboot.version.option}</argument>
+                                        <argument>-Dinsecure.repositories=WARN</argument>
                                         <argument>${repo.argument}</argument>
                                     </arguments>
                                 </configuration>
@@ -177,9 +180,10 @@
                                         <argument>${settings.path}</argument>
                                         <argument>-Pspring-boot-adapter-${adapter.container}</argument>
                                         <argument>-Dmaven.repo.local=${settings.localRepository}</argument>
-                                        <argument>${springboot.version.option}</argument>
+                                        <argument>-Dspringboot-version=${springboot.version.option}</argument>
                                         <argument>-Dapp.server.debug.port=${app.server.debug.port}</argument>
                                         <argument>-Dapp.server.debug.suspend=${app.server.debug.suspend}</argument>
+                                        <argument>-Dinsecure.repositories=WARN</argument>
                                         <argument>${repo.argument}</argument>
                                     </arguments>
                                 </configuration>
@@ -200,7 +204,14 @@
         <profile>
             <id>springboot21</id>
             <properties>
-                <springboot.version.option>-Dspringboot21</springboot.version.option>
+                <springboot.version.option>2.1</springboot.version.option>
+            </properties>
+        </profile>
+
+        <profile>
+            <id>springboot22</id>
+            <properties>
+                <springboot.version.option>2.2</springboot.version.option>
             </properties>
         </profile>
 

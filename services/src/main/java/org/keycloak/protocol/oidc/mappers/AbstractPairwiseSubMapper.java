@@ -1,6 +1,5 @@
 package org.keycloak.protocol.oidc.mappers;
 
-import org.keycloak.models.AuthenticatedClientSessionModel;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.ClientSessionContext;
 import org.keycloak.models.KeycloakSession;
@@ -91,7 +90,7 @@ public abstract class AbstractPairwiseSubMapper extends AbstractOIDCProtocolMapp
     }
 
     protected void setUserInfoTokenSubject(IDToken token, String pairwiseSub) {
-        token.getOtherClaims().put("sub", pairwiseSub);
+        token.setSubject(pairwiseSub);
     }
 
     @Override

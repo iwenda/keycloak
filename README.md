@@ -8,13 +8,13 @@ This repository contains the source code for the Keycloak Server, Java adapters 
 ## Help and Documentation
 
 * [Documentation](https://www.keycloak.org/documentation.html)
-* [User Mailing List](https://lists.jboss.org/mailman/listinfo/keycloak-user) - Mailing list for help and general questions about Keycloak
+* [User Mailing List](https://groups.google.com/d/forum/keycloak-user) - Mailing list for help and general questions about Keycloak
 * [JIRA](https://issues.jboss.org/projects/KEYCLOAK) - Issue tracker for bugs and feature requests
 
 
 ## Reporting Security Vulnerabilities
 
-If you've found a security vulnerability, please look at the [instructions on how to properly report it](http://www.keycloak.org/security.html)
+If you've found a security vulnerability, please look at the [instructions on how to properly report it](SECURITY.md)
 
 
 ## Reporting an issue

@@ -18,14 +18,16 @@ package org.keycloak.testsuite.broker;
 
 import java.util.Map;
 import org.junit.Test;
+import org.keycloak.models.IdentityProviderSyncMode;
 import org.keycloak.representations.idm.IdentityProviderRepresentation;
 import static org.keycloak.testsuite.broker.BrokerTestTools.waitForPage;
 
 import org.keycloak.testsuite.Assert;
-import org.keycloak.testsuite.arquillian.SuiteContext;
+
 import static org.keycloak.testsuite.broker.BrokerTestConstants.IDP_OIDC_ALIAS;
 import static org.keycloak.testsuite.broker.BrokerTestConstants.IDP_OIDC_PROVIDER_ID;
 import static org.keycloak.testsuite.broker.BrokerTestTools.createIdentityProvider;
+import static org.keycloak.testsuite.broker.BrokerTestTools.getConsumerRoot;
 
 /**
  * Migrated from old testsuite.  Previous version by Pedro Igor.
@@ -43,11 +45,11 @@ public class KcOidcBrokerHiddenIdpHintTest extends AbstractInitializedBaseBroker
     private class KcOidcHiddenBrokerConfiguration extends KcOidcBrokerConfiguration {
         
         @Override
-        public IdentityProviderRepresentation setUpIdentityProvider(SuiteContext suiteContext) {
+        public IdentityProviderRepresentation setUpIdentityProvider(IdentityProviderSyncMode syncMode) {
             IdentityProviderRepresentation idp = createIdentityProvider(IDP_OIDC_ALIAS, IDP_OIDC_PROVIDER_ID);
 
             Map<String, String> config = idp.getConfig();
-            applyDefaultConfiguration(suiteContext, config);
+            applyDefaultConfiguration(config, syncMode);
             config.put("hideOnLoginPage", "true");
             return idp;
         }
@@ -55,7 +57,7 @@ public class KcOidcBrokerHiddenIdpHintTest extends AbstractInitializedBaseBroker
 
     @Test
     public void testSuccessfulRedirectToProviderHiddenOnLoginPage() {
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         waitForPage(driver, "log in to", true);
         String url = driver.getCurrentUrl() + "&kc_idp_hint=" + bc.getIDPAlias();
         driver.navigate().to(url);
@@ -64,7 +66,7 @@ public class KcOidcBrokerHiddenIdpHintTest extends AbstractInitializedBaseBroker
                 driver.getCurrentUrl().contains("/auth/realms/" + bc.providerRealmName() + "/"));
 
         log.debug("Logging in");
-        accountLoginPage.login(bc.getUserLogin(), bc.getUserPassword());
+        loginPage.login(bc.getUserLogin(), bc.getUserPassword());
         
         // authenticated and redirected to app
         Assert.assertTrue(driver.getCurrentUrl().contains("/auth/realms/" + bc.consumerRealmName() + "/"));

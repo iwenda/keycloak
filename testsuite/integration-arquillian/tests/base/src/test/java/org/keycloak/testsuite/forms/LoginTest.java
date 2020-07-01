@@ -31,7 +31,6 @@ import org.keycloak.events.EventType;
 import org.keycloak.jose.jws.JWSInput;
 import org.keycloak.jose.jws.JWSInputException;
 import org.keycloak.models.BrowserSecurityHeaders;
-import org.keycloak.models.Constants;
 import org.keycloak.models.utils.SessionTimeoutHelper;
 import org.keycloak.protocol.oidc.OIDCLoginProtocolService;
 import org.keycloak.representations.idm.ClientRepresentation;
@@ -41,14 +40,15 @@ import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.testsuite.AssertEvents;
 import org.keycloak.testsuite.AbstractTestRealmKeycloakTest;
 import org.keycloak.testsuite.admin.ApiUtil;
-import org.keycloak.testsuite.arquillian.AuthServerTestEnricher;
 import org.keycloak.testsuite.console.page.AdminConsole;
+import org.keycloak.testsuite.pages.AccountUpdateProfilePage;
 import org.keycloak.testsuite.pages.AppPage;
 import org.keycloak.testsuite.pages.AppPage.RequestType;
 import org.keycloak.testsuite.pages.ErrorPage;
 import org.keycloak.testsuite.pages.LoginPage;
 import org.keycloak.testsuite.pages.LoginPasswordUpdatePage;
 import org.keycloak.testsuite.updaters.RealmAttributeUpdater;
+import org.keycloak.testsuite.util.ContainerAssume;
 import org.keycloak.testsuite.util.DroneUtils;
 import org.keycloak.testsuite.util.JavascriptBrowser;
 import org.keycloak.testsuite.util.OAuthClient;
@@ -56,6 +56,7 @@ import org.keycloak.testsuite.util.Matchers;
 import org.keycloak.testsuite.util.RealmBuilder;
 import org.keycloak.testsuite.util.TokenSignatureUtil;
 import org.keycloak.testsuite.util.UserBuilder;
+import org.keycloak.testsuite.util.WaitUtils;
 import org.openqa.selenium.NoSuchElementException;
 import org.openqa.selenium.WebDriver;
 
@@ -68,6 +69,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import org.apache.commons.lang3.RandomStringUtils;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
@@ -78,7 +80,9 @@ import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 import static org.keycloak.testsuite.admin.ApiUtil.findClientByClientId;
 import static org.keycloak.testsuite.util.OAuthClient.AUTH_SERVER_ROOT;
+import static org.keycloak.testsuite.util.OAuthClient.SERVER_ROOT;
 import static org.keycloak.testsuite.util.URLAssert.assertCurrentUrlStartsWithLoginUrlOf;
+import static org.keycloak.testsuite.util.ServerURLs.getAuthServerContextRoot;
 
 /**
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
@@ -145,6 +149,9 @@ public class LoginTest extends AbstractTestRealmKeycloakTest {
     protected ErrorPage errorPage;
 
     @Page
+    protected AccountUpdateProfilePage profilePage;
+
+    @Page
     protected LoginPasswordUpdatePage updatePasswordPage;
 
     private static String userId;
@@ -208,6 +215,23 @@ public class LoginTest extends AbstractTestRealmKeycloakTest {
 
         response.close();
         client.close();
+    }
+
+    @Test
+    public void loginWithLongRedirectUri() throws Exception {
+        try (AutoCloseable c = new RealmAttributeUpdater(adminClient.realm("test"))
+                .updateWith(r -> r.setEventsEnabled(true)).update()) {
+            String randomLongString = RandomStringUtils.random(2500, true, true);
+            String longRedirectUri = oauth.getRedirectUri() + "?longQueryParameterValue=" + randomLongString;
+            UriBuilder longLoginUri = UriBuilder.fromUri(oauth.getLoginFormUrl()).replaceQueryParam(OAuth2Constants.REDIRECT_URI, longRedirectUri);
+
+            DroneUtils.getCurrentDriver().navigate().to(longLoginUri.build().toString());
+
+            loginPage.assertCurrent();
+            loginPage.login("login-test", "password");
+
+            events.expectLogin().user(userId).detail(OAuth2Constants.REDIRECT_URI, longRedirectUri).assertEvent();
+        }
     }
 
     @Test
@@ -320,7 +344,7 @@ public class LoginTest extends AbstractTestRealmKeycloakTest {
             Assert.assertEquals("", loginPage.getPassword());
 
             // KEYCLOAK-2024
-            Assert.assertEquals("Account is disabled, contact admin.", loginPage.getError());
+            Assert.assertEquals("Account is disabled, contact your administrator.", loginPage.getError());
 
             events.expectLogin().user(userId).session((String) null).error("user_disabled")
                     .detail(Details.USERNAME, "login-test")
@@ -328,6 +352,36 @@ public class LoginTest extends AbstractTestRealmKeycloakTest {
                     .assertEvent();
         } finally {
             setUserEnabled("login-test", true);
+        }
+    }
+
+    @Test
+    public void loginDifferentUserAfterDisabledUserThrownOut() {
+        String userId = adminClient.realm("test").users().search("test-user@localhost").get(0).getId();
+        try {
+            //profilePage.open();
+            loginPage.open();
+            loginPage.login("test-user@localhost", "password");
+
+            //accountPage.assertCurrent();
+            appPage.assertCurrent();
+            appPage.openAccount();
+
+            profilePage.assertCurrent();
+
+            setUserEnabled(userId, false);
+
+            // force refresh token which results in redirecting to login page
+            profilePage.updateUsername("notPermitted");
+            WaitUtils.waitForPageToLoad();
+
+            loginPage.assertCurrent();
+
+            // try to log in as different user
+            loginPage.login("keycloak-user@localhost", "password");
+            profilePage.assertCurrent();
+        } finally {
+            setUserEnabled(userId, true);
         }
     }
 
@@ -396,6 +450,8 @@ public class LoginTest extends AbstractTestRealmKeycloakTest {
 
     @Test
     public void loginSuccessRealmSigningAlgorithms() throws JWSInputException {
+        ContainerAssume.assumeAuthServerSSL();
+
         loginPage.open();
         loginPage.login("login-test", "password");
 
@@ -404,7 +460,7 @@ public class LoginTest extends AbstractTestRealmKeycloakTest {
 
         events.expectLogin().user(userId).detail(Details.USERNAME, "login-test").assertEvent();
 
-        driver.navigate().to(AuthServerTestEnricher.getAuthServerContextRoot() + "/auth/realms/test/");
+        driver.navigate().to(getAuthServerContextRoot() + "/auth/realms/test/");
         String keycloakIdentity = driver.manage().getCookieNamed("KEYCLOAK_IDENTITY").getValue();
 
         // Check identity cookie is signed with HS256
@@ -417,7 +473,7 @@ public class LoginTest extends AbstractTestRealmKeycloakTest {
             oauth.openLoginForm();
             Assert.assertEquals(RequestType.AUTH_RESPONSE, appPage.getRequestType());
 
-            driver.navigate().to(AuthServerTestEnricher.getAuthServerContextRoot() + "/auth/realms/test/");
+            driver.navigate().to(getAuthServerContextRoot() + "/auth/realms/test/");
             keycloakIdentity = driver.manage().getCookieNamed("KEYCLOAK_IDENTITY").getValue();
 
             // Check identity cookie is still signed with HS256
@@ -700,7 +756,7 @@ public class LoginTest extends AbstractTestRealmKeycloakTest {
         loginPage.login("login@test.com", "password");
         loginPage.assertCurrent();
 
-        Assert.assertEquals("You took too long to login. Login process starting from beginning.", loginPage.getError());
+        Assert.assertEquals("Your login attempt timed out. Login will start from the beginning.", loginPage.getError());
         setTimeOffset(0);
 
         events.expectLogin().user((String) null).session((String) null).error(Errors.EXPIRED_CODE).clearDetails()
@@ -720,7 +776,7 @@ public class LoginTest extends AbstractTestRealmKeycloakTest {
         //loginPage.assertCurrent();
         loginPage.assertCurrent();
 
-        Assert.assertEquals("You took too long to login. Login process starting from beginning.", loginPage.getError());
+        Assert.assertEquals("Your login attempt timed out. Login will start from the beginning.", loginPage.getError());
         setTimeOffset(0);
 
         events.expectLogin().user((String) null).session((String) null).error(Errors.EXPIRED_CODE).clearDetails()
@@ -778,9 +834,8 @@ public class LoginTest extends AbstractTestRealmKeycloakTest {
 
     @Test
     public void openLoginFormWithDifferentApplication() throws Exception {
-        // Login form shown after redirect from admin console
-        oauth.clientId(Constants.ADMIN_CONSOLE_CLIENT_ID);
-        oauth.redirectUri(AuthServerTestEnricher.getAuthServerContextRoot() + "/auth/admin/test/console");
+        oauth.clientId("root-url-client");
+        oauth.redirectUri(SERVER_ROOT + "/foo/bar/");
         oauth.openLoginForm();
 
         // Login form shown after redirect from app

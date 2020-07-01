@@ -27,15 +27,13 @@ import org.keycloak.models.UserModel;
 import org.keycloak.models.utils.KeycloakModelUtils;
 import org.keycloak.models.utils.UserModelDelegate;
 import org.keycloak.models.utils.reflection.Property;
-import org.keycloak.models.utils.reflection.PropertyCriteria;
-import org.keycloak.models.utils.reflection.PropertyQueries;
 import org.keycloak.storage.UserStorageProvider;
 import org.keycloak.storage.ldap.LDAPStorageProvider;
+import org.keycloak.storage.ldap.LDAPUtils;
 import org.keycloak.storage.ldap.idm.model.LDAPObject;
 import org.keycloak.storage.ldap.idm.query.Condition;
 import org.keycloak.storage.ldap.idm.query.internal.LDAPQuery;
 
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -44,6 +42,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
 import org.keycloak.models.ModelException;
 
 /**
@@ -53,28 +52,7 @@ public class UserAttributeLDAPStorageMapper extends AbstractLDAPStorageMapper {
 
     private static final Logger logger = Logger.getLogger(UserAttributeLDAPStorageMapper.class);
 
-    private static final Map<String, Property<Object>> userModelProperties;
-
-    static {
-        Map<String, Property<Object>> userModelProps = PropertyQueries.createQuery(UserModel.class).addCriteria(new PropertyCriteria() {
-
-            @Override
-            public boolean methodMatches(Method m) {
-                if ((m.getName().startsWith("get") || m.getName().startsWith("is")) && m.getParameterTypes().length > 0) {
-                    return false;
-                }
-
-                return true;
-            }
-
-        }).getResultList();
-
-        // Convert to be keyed by lower-cased attribute names
-        userModelProperties = new HashMap<>();
-        for (Map.Entry<String, Property<Object>> entry : userModelProps.entrySet()) {
-            userModelProperties.put(entry.getKey().toLowerCase(), entry.getValue());
-        }
-    }
+    private static final Map<String, Property<Object>> userModelProperties = LDAPUtils.getUserModelProperties();
 
     public static final String USER_MODEL_ATTRIBUTE = "user.model.attribute";
     public static final String LDAP_ATTRIBUTE = "ldap.attribute";
@@ -213,6 +191,11 @@ public class UserAttributeLDAPStorageMapper extends AbstractLDAPStorageMapper {
 
                 @Override
                 public void setSingleAttribute(String name, String value) {
+                    if (UserModel.USERNAME.equals(name)) {
+                        checkDuplicateUsername(userModelAttrName, value, realm, ldapProvider.getSession(), this);
+                    } else if (UserModel.EMAIL.equals(name)) {
+                        checkDuplicateEmail(userModelAttrName, value, realm, ldapProvider.getSession(), this);
+                    }
                     if (setLDAPAttribute(name, value)) {
                         super.setSingleAttribute(name, value);
                     }
@@ -220,6 +203,11 @@ public class UserAttributeLDAPStorageMapper extends AbstractLDAPStorageMapper {
 
                 @Override
                 public void setAttribute(String name, List<String> values) {
+                    if (UserModel.USERNAME.equals(name)) {
+                        checkDuplicateUsername(userModelAttrName, values.get(0), realm, ldapProvider.getSession(), this);
+                    } else if (UserModel.EMAIL.equals(name)) {
+                        checkDuplicateEmail(userModelAttrName, values.get(0), realm, ldapProvider.getSession(), this);
+                    }
                     if (setLDAPAttribute(name, values)) {
                         super.setAttribute(name, values);
                     }
@@ -227,7 +215,7 @@ public class UserAttributeLDAPStorageMapper extends AbstractLDAPStorageMapper {
 
                 @Override
                 public void removeAttribute(String name) {
-                    if ( setLDAPAttribute(name, null)) {
+                    if (setLDAPAttribute(name, null)) {
                         super.removeAttribute(name);
                     }
                 }
@@ -265,7 +253,7 @@ public class UserAttributeLDAPStorageMapper extends AbstractLDAPStorageMapper {
                             UserAttributeLDAPStorageMapper.logger.tracef("Pushing user attribute to LDAP. username: %s, Model attribute name: %s, LDAP attribute name: %s, Attribute value: %s", getUsername(), modelAttrName, ldapAttrName, value);
                         }
 
-                        ensureTransactionStarted();
+                        markUpdatedAttributeInTransaction(modelAttrName);
 
                         if (value == null) {
                             if (isMandatoryInLdap) {
@@ -449,7 +437,6 @@ public class UserAttributeLDAPStorageMapper extends AbstractLDAPStorageMapper {
     private boolean isReadOnly() {
         return parseBooleanParameter(mapperModel, READ_ONLY);
     }
-
 
     protected void setPropertyOnUserModel(Property<Object> userModelProperty, UserModel user, String ldapAttrValue) {
         if (ldapAttrValue == null) {

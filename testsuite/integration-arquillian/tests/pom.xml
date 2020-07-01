@@ -24,7 +24,7 @@
     <parent>
         <groupId>org.keycloak.testsuite</groupId>
         <artifactId>integration-arquillian</artifactId>
-        <version>8.0.0-SNAPSHOT</version>
+        <version>11.0.0-SNAPSHOT</version>
     </parent>
 
     <packaging>pom</packaging>
@@ -45,6 +45,8 @@
         <auth.server.cluster>false</auth.server.cluster>
         <auth.server.undertow.cluster>false</auth.server.undertow.cluster>
         <auth.server.jboss.cluster>false</auth.server.jboss.cluster>
+        <auth.server.jboss.legacy>false</auth.server.jboss.legacy>
+        <auth.server.quarkus.cluster>false</auth.server.quarkus.cluster>
 
         <auth.server.crossdc>false</auth.server.crossdc>
         <auth.server.undertow.crossdc>false</auth.server.undertow.crossdc>
@@ -56,6 +58,7 @@
         <auth.server.config.dir>${auth.server.home}</auth.server.config.dir>
 
         <auth.server.host>localhost</auth.server.host>
+        <auth.server.management.host>${auth.server.host}</auth.server.management.host>
         <auth.server.browserHost/> <!-- if set, this host will be used by the browser instead of auth.server.host -->
         <auth.server.port.offset>100</auth.server.port.offset>
         <auth.server.http.port>8180</auth.server.http.port>
@@ -67,12 +70,16 @@
         <auth.server.memory.settings>-Xms64m -Xmx512m</auth.server.memory.settings>
         <auth.server.config.property.name>serverConfig</auth.server.config.property.name>
         <auth.server.adapter.impl.class>org.jboss.as.arquillian.container.managed.ManagedDeployableContainer</auth.server.adapter.impl.class>
-        <auth.server.truststore>&#36;{jboss.home.dir}/standalone/configuration/keycloak.truststore</auth.server.truststore>
+        <auth.server.truststore>${auth.server.config.dir}/keycloak.truststore</auth.server.truststore>
         <auth.server.truststore.password>secret</auth.server.truststore.password>
+        <auth.server.keystore>${auth.server.config.dir}/keycloak.jks</auth.server.keystore>
+        <auth.server.keystore.password>secret</auth.server.keystore.password>
         <auth.server.jvm.args.extra/>
 
         <auth.server.jboss.artifactId>integration-arquillian-servers-auth-server-${auth.server}</auth.server.jboss.artifactId>
         <auth.server.jboss.skip.unpack>${auth.server.undertow}</auth.server.jboss.skip.unpack>
+        <auth.server.quarkus.skip.unpack>true</auth.server.quarkus.skip.unpack>
+        <auth.server.undertow.skip.unpack>false</auth.server.undertow.skip.unpack>
         <auth.server.jboss.startup.timeout>300</auth.server.jboss.startup.timeout>
 
         <!--debug properties-->
@@ -81,12 +88,17 @@
         <auth.server.jboss.jvm.debug.args>-agentlib:jdwp=transport=dt_socket,server=y,suspend=${auth.server.debug.suspend},address=${auth.server.host}:${auth.server.debug.port}</auth.server.jboss.jvm.debug.args>
 
         <auth.server.remote>false</auth.server.remote>
+        <auth.server.quarkus>false</auth.server.quarkus>
+
         <auth.server.profile/>
         <auth.server.feature/>
+
+        <auth.server.host2>${auth.server.host}</auth.server.host2> <!-- for broker and JS adapter tests; defaults to auth.server.host -->
 
         <app.server.skip.unpack>true</app.server.skip.unpack>
         <app.server.artifactId>integration-arquillian-servers-app-server-${app.server}</app.server.artifactId>
         <app.server.home>${containers.home}/app-server-${app.server}</app.server.home>
+        <app.server.config.dir>${app.server.home}/standalone/configuration</app.server.config.dir>
         <app.server.port.offset>200</app.server.port.offset>
         <app.server.http.port>8280</app.server.http.port>
         <app.server.https.port>8643</app.server.https.port>
@@ -105,6 +117,10 @@
         <app.server.memory.Xmx>512m</app.server.memory.Xmx>
         <app.server.memory.settings>-Xms${app.server.memory.Xms} -Xmx${app.server.memory.Xmx} -XX:MetaspaceSize=${surefire.memory.metaspace} -XX:MaxMetaspaceSize=${surefire.memory.metaspace.max}</app.server.memory.settings>
         <app.server.ssl.required>false</app.server.ssl.required>
+        <app.server.truststore>${app.server.config.dir}/keycloak.truststore</app.server.truststore>
+        <app.server.truststore.password>secret</app.server.truststore.password>
+        <app.server.keystore>${app.server.config.dir}/adapter.jks</app.server.keystore>
+        <app.server.keystore.password>secret</app.server.keystore.password>
         <app.server.jvm.args.extra/>
 
         <cache.server>undefined</cache.server>
@@ -115,6 +131,12 @@
         <cache.server.2.port.offset>2010</cache.server.2.port.offset>
         <cache.server.2.management.port>12000</cache.server.2.management.port>
         <cache.server.console.output>true</cache.server.console.output>
+
+        <dependency.keystore.root>${project.build.directory}/dependency/keystore</dependency.keystore.root>
+        <dependency.truststore>${dependency.keystore.root}/keycloak.truststore</dependency.truststore>
+        <dependency.truststore.password>secret</dependency.truststore.password>
+        <dependency.keystore>${dependency.keystore.root}/keycloak.jks</dependency.keystore>
+        <dependency.keystore.password>secret</dependency.keystore.password>
 
         <keycloak.connectionsInfinispan.remoteStoreServer>localhost</keycloak.connectionsInfinispan.remoteStoreServer>
         <keycloak.connectionsInfinispan.remoteStorePort>12232</keycloak.connectionsInfinispan.remoteStorePort>
@@ -150,18 +172,24 @@
         <skip.copy.example.wars>false</skip.copy.example.wars>
 
         <browser>htmlUnit</browser>
+        <browser.strict.cookies>false</browser.strict.cookies>
         <webdriverDownloadBinaries>true</webdriverDownloadBinaries>
         <droneInstantiationTimeoutInSeconds>60</droneInstantiationTimeoutInSeconds>
         <github.username/>
         <github.secretToken/>
         <ieDriverArch>Win32</ieDriverArch>
+        <ieDriverVersion/>
         <js.browser>phantomjs</js.browser>
         <js.chromeArguments>--headless</js.chromeArguments>
         <htmlUnitBrowserVersion>chrome</htmlUnitBrowserVersion>
         <firefox_binary/> <!-- the path is set automatically based on the OS -->
         <firefoxLegacyDriver>false</firefoxLegacyDriver>
+        <firefoxDriverVersion/>
+        <firefoxUserPreferences/>
+        <firefoxHeadless>false</firefoxHeadless>
         <chromeBinary/>
         <chromeArguments/>
+        <chromeDriverVersion/>
 
         <appium.platformName/>
         <appium.deviceName/>
@@ -175,7 +203,6 @@
         <backends.console.output>true</backends.console.output>
 
         <testsuite.constants>${project.build.directory}/dependency/test-constants.properties</testsuite.constants>
-        <testsuite.ui.layout>0</testsuite.ui.layout> <!-- this is to tell the UI tests what type of layout to expect (doesn't setup the layout, just what to expect); 0 == desktop layout, 1 == smartphone layout, 2 == tablet layout -->
 
         <skip.add.user.json>false</skip.add.user.json>
         <skip.clean.second.cache>true</skip.clean.second.cache>
@@ -195,6 +222,7 @@
 
         <auth.server.ocsp.responder.enabled>false</auth.server.ocsp.responder.enabled>
         <keycloak.x509cert.lookup.provider>default</keycloak.x509cert.lookup.provider>
+        <auth.server.quarkus.config>local</auth.server.quarkus.config>
     </properties>
 
     <build>
@@ -221,6 +249,45 @@
                                 <outputDirectory>${containers.home}</outputDirectory>
                                 <overWriteIfNewer>true</overWriteIfNewer>
                                 <skip>${auth.server.jboss.skip.unpack}</skip>
+                            </configuration>
+                        </execution>
+                        <execution>
+                            <id>unpack-undertow-server</id>
+                            <phase>generate-test-resources</phase>
+                            <goals>
+                                <goal>unpack</goal>
+                            </goals>
+                            <configuration>
+                                <artifactItems>
+                                    <artifactItem>
+                                        <groupId>org.keycloak.testsuite</groupId>
+                                        <artifactId>integration-arquillian-servers-auth-server-undertow</artifactId>
+                                        <version>${project.version}</version>
+                                        <type>jar</type>
+                                        <outputDirectory>${containers.home}/auth-server-undertow</outputDirectory>
+                                    </artifactItem>
+                                </artifactItems>
+                                <includes>*.jks,*.crt,*.truststore,*.crl,*.key,certs/clients/*</includes>
+                                <skip>${auth.server.undertow.skip.unpack}</skip>
+                            </configuration>
+                        </execution>
+                        <execution>
+                            <id>unpack-quarkus-server</id>
+                            <phase>generate-test-resources</phase>
+                            <goals>
+                                <goal>unpack</goal>
+                            </goals>
+                            <configuration>
+                                <artifactItems>
+                                    <artifactItem>
+                                        <groupId>org.keycloak.testsuite</groupId>
+                                        <artifactId>integration-arquillian-servers-auth-server-quarkus</artifactId>
+                                        <version>${project.version}</version>
+                                        <type>zip</type>
+                                        <outputDirectory>${containers.home}</outputDirectory>
+                                    </artifactItem>
+                                </artifactItems>
+                                <skip>${auth.server.quarkus.skip.unpack}</skip>
                             </configuration>
                         </execution>
                         <execution>
@@ -355,7 +422,7 @@
                                     <resource>
                                         <directory>src/test/resources</directory>
                                         <includes>
-                                            <include>keystore/keycloak.truststore</include>
+                                            <include>keystore/**</include>
                                         </includes>
                                     </resource>
                                 </resources>
@@ -421,6 +488,7 @@
                             <auth.server.java.home>${auth.server.java.home}</auth.server.java.home>
 
                             <auth.server.host>${auth.server.host}</auth.server.host>
+                            <auth.server.management.host>${auth.server.management.host}</auth.server.management.host>
                             <auth.server.browserHost>${auth.server.browserHost}</auth.server.browserHost>
                             <auth.server.port.offset>${auth.server.port.offset}</auth.server.port.offset>
                             <auth.server.http.port>${auth.server.http.port}</auth.server.http.port>
@@ -437,13 +505,18 @@
                             <auth.server.jboss.jvm.debug.args>${auth.server.jboss.jvm.debug.args}</auth.server.jboss.jvm.debug.args>
                             <auth.server.truststore>${auth.server.truststore}</auth.server.truststore>
                             <auth.server.truststore.password>${auth.server.truststore.password}</auth.server.truststore.password>
+                            <auth.server.keystore>${auth.server.keystore}</auth.server.keystore>
+                            <auth.server.keystore.password>${auth.server.keystore.password}</auth.server.keystore.password>
                             <auth.server.jvm.args.extra>${auth.server.jvm.args.extra}</auth.server.jvm.args.extra>
 
                             <auth.server.profile>${auth.server.profile}</auth.server.profile>
                             <auth.server.feature>${auth.server.feature}</auth.server.feature>
 
+                            <auth.server.host2>${auth.server.host2}</auth.server.host2> <!-- for broker tests -->
+
                             <app.server>${app.server}</app.server>
                             <app.server.home>${app.server.home}</app.server.home>
+                            <app.server.config.dir>${app.server.config.dir}</app.server.config.dir>
                             <app.server.java.home>${app.server.java.home}</app.server.java.home>
                             <app.server.memory.settings>${app.server.memory.settings}</app.server.memory.settings>
                             <app.server.port.offset>${app.server.port.offset}</app.server.port.offset>
@@ -458,12 +531,17 @@
                             <app.server.2.port.offset>${app.server.2.port.offset}</app.server.2.port.offset>
                             <app.server.2.management.port>${app.server.2.management.port}</app.server.2.management.port>
                             <app.server.jboss.jvm.debug.args>${app.server.jboss.jvm.debug.args}</app.server.jboss.jvm.debug.args>
+                            <app.server.truststore>${app.server.truststore}</app.server.truststore>
+                            <app.server.truststore.password>${app.server.truststore.password}</app.server.truststore.password>
+                            <app.server.keystore>${app.server.keystore}</app.server.keystore>
+                            <app.server.keystore.password>${app.server.keystore.password}</app.server.keystore.password>
                             <app.server.jvm.args.extra>${app.server.jvm.args.extra}</app.server.jvm.args.extra>
 
                             <frontend.console.output>${frontend.console.output}</frontend.console.output>
                             <backends.console.output>${backend.console.output}</backends.console.output>
 
                             <auth.server.remote>${auth.server.remote}</auth.server.remote>
+                            <auth.server.quarkus>${auth.server.quarkus}</auth.server.quarkus>
 
                             <adapter.test.props>${adapter.test.props}</adapter.test.props>
                             <examples.home>${examples.home}</examples.home>
@@ -472,11 +550,17 @@
                             <kie.maven.settings>${kie.maven.settings}</kie.maven.settings>
 
                             <testsuite.constants>${testsuite.constants}</testsuite.constants>
-                            <testsuite.ui.layout>${testsuite.ui.layout}</testsuite.ui.layout>
                             <cli.log.output>${cli.log.output}</cli.log.output>
                             <test.intermittent>${test.intermittent}</test.intermittent>
 
+                            <dependency.keystore.root>${dependency.keystore.root}</dependency.keystore.root>
+                            <dependency.truststore>${dependency.truststore}</dependency.truststore>
+                            <dependency.truststore.password>${dependency.truststore.password}</dependency.truststore.password>
+                            <dependency.keystore>${dependency.keystore}</dependency.keystore>
+                            <dependency.keystore.password>${dependency.keystore.password}</dependency.keystore.password>
+
                             <browser>${browser}</browser>
+                            <browser.strict.cookies>${browser.strict.cookies}</browser.strict.cookies>
                             <js.browser>${js.browser}</js.browser>
                             <js.chromeArguments>${js.chromeArguments}</js.chromeArguments>
                             <htmlUnitBrowserVersion>${htmlUnitBrowserVersion}</htmlUnitBrowserVersion>
@@ -486,12 +570,17 @@
                             <github.username>${github.username}</github.username>
                             <github.secretToken>${github.secretToken}</github.secretToken>
                             <ieDriverArch>${ieDriverArch}</ieDriverArch>
+                            <ieDriverVersion>${ieDriverVersion}</ieDriverVersion>
 
                             <firefox_binary>${firefox_binary}</firefox_binary>
                             <chromeBinary>${chromeBinary}</chromeBinary>
                             <chromeArguments>${chromeArguments}</chromeArguments>
+                            <chromeDriverVersion>${chromeDriverVersion}</chromeDriverVersion>
 
                             <firefoxLegacyDriver>${firefoxLegacyDriver}</firefoxLegacyDriver>
+                            <firefoxDriverVersion>${firefoxDriverVersion}</firefoxDriverVersion>
+                            <firefoxUserPreferences>${firefoxUserPreferences}</firefoxUserPreferences>
+                            <firefoxHeadless>${firefoxHeadless}</firefoxHeadless>
 
                             <appium.platformName>${appium.platformName}</appium.platformName>
                             <appium.deviceName>${appium.deviceName}</appium.deviceName>
@@ -522,6 +611,9 @@
                             <auth.server.cluster>${auth.server.cluster}</auth.server.cluster>
                             <auth.server.undertow.cluster>${auth.server.undertow.cluster}</auth.server.undertow.cluster>
                             <auth.server.jboss.cluster>${auth.server.jboss.cluster}</auth.server.jboss.cluster>
+                            <auth.server.jboss.legacy>${auth.server.jboss.legacy}</auth.server.jboss.legacy>
+                            <auth.server.quarkus.cluster>${auth.server.quarkus.cluster}</auth.server.quarkus.cluster>
+                            <auth.server.quarkus.config>${auth.server.quarkus.config}</auth.server.quarkus.config>
 
                             <!--cache server properties-->
                             <auth.server.crossdc>${auth.server.crossdc}</auth.server.crossdc>
@@ -633,6 +725,51 @@
                     <version>${wildfly.core.version}</version>
                 </dependency>
             </dependencies>
+        </profile>
+
+        <profile>
+            <id>auth-server-quarkus</id>
+            <properties>
+                <auth.server>quarkus</auth.server>
+                <auth.server.quarkus>true</auth.server.quarkus>
+                <auth.server.jboss>false</auth.server.jboss>
+                <auth.server.undertow>false</auth.server.undertow>
+                <auth.server.config.dir>${auth.server.home}/conf</auth.server.config.dir>
+                <auth.server.quarkus.skip.unpack>false</auth.server.quarkus.skip.unpack>
+                <auth.server.undertow.skip.unpack>true</auth.server.undertow.skip.unpack>
+                <auth.server.jboss.skip.unpack>true</auth.server.jboss.skip.unpack>
+            </properties>
+        </profile>
+
+        <profile>
+            <id>auth-server-cluster-quarkus</id>
+            <properties>
+                <!--disable exclusion pattern for cluster test which is enabled by default in base/pom.xml-->
+                <exclude.cluster>-</exclude.cluster>
+                <auth.server.cluster>true</auth.server.cluster>
+                <auth.server.quarkus.cluster>true</auth.server.quarkus.cluster>
+                <auth.server.quarkus.config>ha</auth.server.quarkus.config>
+                <auth.server>quarkus</auth.server>
+                <auth.server.quarkus>true</auth.server.quarkus>
+                <auth.server.jboss>false</auth.server.jboss>
+                <auth.server.undertow>false</auth.server.undertow>
+                <auth.server.config.dir>${auth.server.home}/conf</auth.server.config.dir>
+                <auth.server.quarkus.skip.unpack>false</auth.server.quarkus.skip.unpack>
+                <auth.server.undertow.skip.unpack>true</auth.server.undertow.skip.unpack>
+                <auth.server.jboss.skip.unpack>true</auth.server.jboss.skip.unpack>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <systemPropertyVariables>
+                                <pageload.timeout>20000</pageload.timeout>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
 
         <profile>
@@ -1125,6 +1262,11 @@
 
                 <auth.server.backend1.home>${containers.home}/auth-server-${auth.server}-backend1</auth.server.backend1.home>
                 <auth.server.backend2.home>${containers.home}/auth-server-${auth.server}-backend2</auth.server.backend2.home>
+                <auth.server.backend1.debug.port>5008</auth.server.backend1.debug.port>
+                <auth.server.backend2.debug.port>5009</auth.server.backend2.debug.port>
+
+                <auth.server.legacy.home>${containers.home}/auth-server-legacy</auth.server.legacy.home>
+                <auth.server.legacy.debug.port>5010</auth.server.legacy.debug.port>
 
                 <auth.server.config.dir>${auth.server.backend1.home}/standalone/configuration</auth.server.config.dir>
 
@@ -1189,6 +1331,8 @@
 
                                     <auth.server.backend1.home>${auth.server.backend1.home}</auth.server.backend1.home>
                                     <auth.server.backend2.home>${auth.server.backend2.home}</auth.server.backend2.home>
+                                    <auth.server.backend1.jvm.debug.args>-agentlib:jdwp=transport=dt_socket,server=y,suspend=${auth.server.debug.suspend},address=${auth.server.host}:${auth.server.backend1.debug.port}</auth.server.backend1.jvm.debug.args>
+                                    <auth.server.backend2.jvm.debug.args>-agentlib:jdwp=transport=dt_socket,server=y,suspend=${auth.server.debug.suspend},address=${auth.server.host}:${auth.server.backend2.debug.port}</auth.server.backend2.jvm.debug.args>
 
                                     <!--100-->
                                     <auth.server.backend1.port.offset>101</auth.server.backend1.port.offset>
@@ -1205,6 +1349,11 @@
                                     <!--10099-->
                                     <auth.server.backend1.management.port.jmx>10100</auth.server.backend1.management.port.jmx>
                                     <auth.server.backend2.management.port.jmx>10101</auth.server.backend2.management.port.jmx>
+
+                                    <auth.server.legacy.home>${auth.server.legacy.home}</auth.server.legacy.home>
+                                    <auth.server.legacy.jvm.debug.args>-agentlib:jdwp=transport=dt_socket,server=y,suspend=${auth.server.debug.suspend},address=${auth.server.host}:${auth.server.legacy.debug.port}</auth.server.legacy.jvm.debug.args>
+                                    <auth.server.legacy.port.offset>600</auth.server.legacy.port.offset>
+                                    <auth.server.legacy.management.port>10590</auth.server.legacy.management.port>
                                 </systemPropertyVariables>
                             </configuration>
                         </plugin>
@@ -1213,6 +1362,47 @@
             </build>
         </profile>
 
+        <profile>
+            <id>auth-server-legacy</id>
+            <activation>
+                <property>
+                    <name>auth.server.legacy.version</name>
+                </property>
+            </activation>
+            <properties>
+                <auth.server.jboss.legacy>true</auth.server.jboss.legacy>
+            </properties>
+            <build>
+                <pluginManagement>
+                    <plugins>
+                        <plugin>
+                            <artifactId>maven-dependency-plugin</artifactId>
+                            <executions>
+                                <execution>
+                                    <id>unpack-auth-server-legacy</id>
+                                    <phase>generate-resources</phase>
+                                    <goals>
+                                        <goal>unpack</goal>
+                                    </goals>
+                                    <configuration>
+                                        <artifactItems>
+                                            <artifactItem>
+                                                <groupId>org.keycloak.testsuite</groupId>
+                                                <artifactId>integration-arquillian-servers-auth-server-legacy</artifactId>
+                                                <version>${project.version}</version>
+                                                <type>zip</type>
+                                            </artifactItem>
+                                        </artifactItems>
+                                        <outputDirectory>${containers.home}</outputDirectory>
+                                        <overWriteIfNewer>true</overWriteIfNewer>
+                                    </configuration>
+                                </execution>
+                            </executions>
+                        </plugin>
+                    </plugins>
+                </pluginManagement>
+            </build>
+        </profile>
 
         <profile>
             <id>clean-jpa</id>
@@ -1542,12 +1732,6 @@
                 </dependency>
 
                 <dependency>
-                    <groupId>org.jboss.arquillian.container</groupId>
-                    <artifactId>undertow-embedded</artifactId>
-                    <version>${undertow-embedded.version}</version>
-                </dependency>
-
-                <dependency>
                     <groupId>org.jboss.resteasy</groupId>
                     <artifactId>resteasy-client</artifactId>
                 </dependency>
@@ -1651,6 +1835,10 @@
                         <groupId>org.liquibase</groupId>
                         <artifactId>liquibase-maven-plugin</artifactId>
                     </plugin>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>keytool-maven-plugin</artifactId>
+                    </plugin>
                 </plugins>
             </build>
         </profile>
@@ -1684,6 +1872,116 @@
             <id>java7-app-server</id>
             <properties>
                 <app.server.memory.settings>-Xms${app.server.memory.Xms} -Xmx${app.server.memory.Xmx} -XX:PermSize=${surefire.memory.metaspace} -XX:MaxPermSize=${surefire.memory.metaspace.max}</app.server.memory.settings>
+            </properties>
+        </profile>
+
+        <profile>
+            <id>generate-certs-for-custom-auth-server-host</id>
+            <activation>
+                <property>
+                    <name>auth.server.host</name>
+                </property>
+            </activation>
+            <build>
+                <pluginManagement>
+                    <plugins>
+                        <plugin>
+                            <groupId>org.codehaus.mojo</groupId>
+                            <artifactId>keytool-maven-plugin</artifactId>
+                            <executions>
+                                <execution>
+                                    <id>remove-old-auth-server-key</id>
+                                    <phase>generate-test-resources</phase>
+                                    <goals>
+                                        <goal>deleteAlias</goal>
+                                    </goals>
+                                    <configuration>
+                                        <keystore>${dependency.keystore}</keystore>
+                                        <storepass>${dependency.keystore.password}</storepass>
+                                        <alias>localhost</alias>
+                                    </configuration>
+                                </execution>
+                                <execution>
+                                    <id>generate-new-auth-server-cert</id>
+                                    <phase>generate-test-resources</phase>
+                                    <goals>
+                                        <goal>generateKeyPair</goal>
+                                    </goals>
+                                    <configuration>
+                                        <keystore>${dependency.keystore}</keystore>
+                                        <storepass>${dependency.keystore.password}</storepass>
+                                        <alias>${auth.server.host}</alias>
+                                        <dname>CN=${auth.server.host}, OU=Keycloak, O=Red Hat, L=Westword, ST=MA, C=US</dname>
+                                        <ext>SAN=dns:${auth.server.host},dns:${auth.server.host2}</ext> <!-- for broker tests; IdP is the same server as auth server -->
+                                        <keyalg>RSA</keyalg>
+                                        <keysize>2048</keysize>
+                                        <sigalg>SHA256withRSA</sigalg>
+                                    </configuration>
+                                </execution>
+                                <execution>
+                                    <id>export-auth-server-cert</id>
+                                    <phase>generate-test-resources</phase>
+                                    <goals>
+                                        <goal>exportCertificate</goal>
+                                    </goals>
+                                    <configuration>
+                                        <keystore>${dependency.keystore}</keystore>
+                                        <storepass>${dependency.keystore.password}</storepass>
+                                        <alias>${auth.server.host}</alias>
+                                        <file>${dependency.keystore.root}/${auth.server.host}.pem</file>
+                                    </configuration>
+                                </execution>
+                                <execution>
+                                    <id>import-auth-server-cert-to-truststore</id>
+                                    <phase>generate-test-resources</phase>
+                                    <goals>
+                                        <goal>importCertificate</goal>
+                                    </goals>
+                                    <configuration>
+                                        <keystore>${dependency.truststore}</keystore>
+                                        <storepass>${dependency.truststore.password}</storepass>
+                                        <alias>${auth.server.host}</alias>
+                                        <file>${dependency.keystore.root}/${auth.server.host}.pem</file>
+                                        <trustcacerts>true</trustcacerts>
+                                        <noprompt>true</noprompt>
+                                    </configuration>
+                                </execution>
+                            </executions>
+                        </plugin>
+                        <plugin>
+                            <artifactId>maven-resources-plugin</artifactId>
+                            <executions>
+                                <execution>
+                                    <id>copy-processed-truststore-to-auth-server</id>
+                                    <phase>process-test-resources</phase>
+                                    <goals>
+                                        <goal>copy-resources</goal>
+                                    </goals>
+                                    <configuration>
+                                        <outputDirectory>${auth.server.config.dir}</outputDirectory>
+                                        <resources>
+                                            <resource>
+                                                <directory>${dependency.keystore.root}</directory>
+                                            </resource>
+                                        </resources>
+                                        <overwrite>true</overwrite>
+                                    </configuration>
+                                </execution>
+                            </executions>
+                        </plugin>
+                    </plugins>
+                </pluginManagement>
+            </build>
+        </profile>
+
+        <profile>
+            <id>firefox-strict-cookies</id>
+            <properties>
+                <browser>firefox</browser>
+                <js.browser>firefox</js.browser>
+                <firefoxUserPreferences>${project.build.directory}/dependency/firefox-cookies-prefs.js</firefoxUserPreferences>
+                <firefoxHeadless>true</firefoxHeadless>
+                <browser.strict.cookies>true</browser.strict.cookies>
             </properties>
         </profile>
 

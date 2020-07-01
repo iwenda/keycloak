@@ -49,6 +49,8 @@ import org.keycloak.storage.ldap.idm.query.internal.LDAPQueryConditionsBuilder;
 import org.keycloak.storage.ldap.idm.store.ldap.LDAPIdentityStore;
 import org.keycloak.storage.ldap.mappers.FullNameLDAPStorageMapper;
 import org.keycloak.storage.ldap.mappers.FullNameLDAPStorageMapperFactory;
+import org.keycloak.storage.ldap.mappers.HardcodedLDAPAttributeMapper;
+import org.keycloak.storage.ldap.mappers.HardcodedLDAPAttributeMapperFactory;
 import org.keycloak.storage.ldap.mappers.LDAPConfigDecorator;
 import org.keycloak.storage.ldap.mappers.LDAPStorageMapper;
 import org.keycloak.storage.ldap.mappers.LDAPStorageMapperFactory;
@@ -106,6 +108,9 @@ public class LDAPStorageProviderFactory implements UserStorageProviderFactory<LD
                 .property().name(LDAPConstants.VENDOR)
                 .type(ProviderConfigProperty.STRING_TYPE)
                 .add()
+                .property().name(LDAPConstants.USE_PASSWORD_MODIFY_EXTENDED_OP)
+                .type(ProviderConfigProperty.BOOLEAN_TYPE)
+                .add()
                 .property().name(LDAPConstants.USERNAME_LDAP_ATTRIBUTE)
                 .type(ProviderConfigProperty.STRING_TYPE)
                 .add()
@@ -146,6 +151,10 @@ public class LDAPStorageProviderFactory implements UserStorageProviderFactory<LD
                 .defaultValue("1")
                 .add()
                 .property().name(LDAPConstants.VALIDATE_PASSWORD_POLICY)
+                .type(ProviderConfigProperty.BOOLEAN_TYPE)
+                .defaultValue("false")
+                .add()
+                .property().name(LDAPConstants.TRUST_EMAIL)
                 .type(ProviderConfigProperty.BOOLEAN_TYPE)
                 .defaultValue("false")
                 .add()
@@ -249,6 +258,7 @@ public class LDAPStorageProviderFactory implements UserStorageProviderFactory<LD
     @Override
     public void validateConfiguration(KeycloakSession session, RealmModel realm, ComponentModel config) throws ComponentValidationException {
         LDAPConfig cfg = new LDAPConfig(config.getConfig());
+        UserStorageProviderModel userStorageModel = new UserStorageProviderModel(config);
         String customFilter = cfg.getCustomUserSearchFilter();
         LDAPUtils.validateCustomLdapFilter(customFilter);
 
@@ -272,6 +282,10 @@ public class LDAPStorageProviderFactory implements UserStorageProviderFactory<LD
 
         if(cfg.isStartTls() && cfg.getConnectionPooling() != null) {
             throw new ComponentValidationException("ldapErrorCantEnableStartTlsAndConnectionPooling");
+        }
+
+        if (!userStorageModel.isImportEnabled() && cfg.getEditMode() == UserStorageProvider.EditMode.UNSYNCED) {
+            throw new ComponentValidationException("ldapErrorCantEnableUnsyncedAndImportOff");
         }
     }
 
@@ -299,6 +313,7 @@ public class LDAPStorageProviderFactory implements UserStorageProviderFactory<LD
         UserStorageProvider.EditMode editMode = ldapConfig.getEditMode();
         String readOnly = String.valueOf(editMode == UserStorageProvider.EditMode.READ_ONLY || editMode == UserStorageProvider.EditMode.UNSYNCED);
         String usernameLdapAttribute = ldapConfig.getUsernameLdapAttribute();
+        boolean syncRegistrations = Boolean.valueOf(model.getConfig().getFirst(LDAPConstants.SYNC_REGISTRATIONS));
 
         String alwaysReadValueFromLDAP = String.valueOf(editMode== UserStorageProvider.EditMode.READ_ONLY || editMode== UserStorageProvider.EditMode.WRITABLE);
 
@@ -406,13 +421,33 @@ public class LDAPStorageProviderFactory implements UserStorageProviderFactory<LD
             mapperModel = KeycloakModelUtils.createComponentModel("MSAD account controls", model.getId(), MSADUserAccountControlStorageMapperFactory.PROVIDER_ID,LDAPStorageMapper.class.getName());
             realm.addComponentModel(mapperModel);
         }
-        checkKerberosCredential(session, realm, model);
+        String allowKerberosCfg = model.getConfig().getFirst(KerberosConstants.ALLOW_KERBEROS_AUTHENTICATION);
+        if (Boolean.valueOf(allowKerberosCfg)) {
+            CredentialHelper.setOrReplaceAuthenticationRequirement(session, realm, CredentialRepresentation.KERBEROS,
+                    AuthenticationExecutionModel.Requirement.ALTERNATIVE, AuthenticationExecutionModel.Requirement.DISABLED);
+        }
+
+        // In case that "Sync Registration" is ON and the LDAP v3 Password-modify extension is ON, we will create hardcoded mapper to create
+        // random "userPassword" every time when creating user. Otherwise users won't be able to register and login
+        if (!activeDirectory && syncRegistrations && ldapConfig.useExtendedPasswordModifyOp()) {
+            mapperModel = KeycloakModelUtils.createComponentModel("random initial password", model.getId(), HardcodedLDAPAttributeMapperFactory.PROVIDER_ID,LDAPStorageMapper.class.getName(),
+                    HardcodedLDAPAttributeMapper.LDAP_ATTRIBUTE_NAME, LDAPConstants.USER_PASSWORD_ATTRIBUTE,
+                    HardcodedLDAPAttributeMapper.LDAP_ATTRIBUTE_VALUE, HardcodedLDAPAttributeMapper.RANDOM_ATTRIBUTE_VALUE);
+            realm.addComponentModel(mapperModel);
+        }
     }
 
     @Override
     public void onUpdate(KeycloakSession session, RealmModel realm, ComponentModel oldModel, ComponentModel newModel) {
-        checkKerberosCredential(session, realm, newModel);
-
+        boolean allowKerberosCfgOld = Boolean.valueOf(oldModel.getConfig().getFirst(KerberosConstants.ALLOW_KERBEROS_AUTHENTICATION));
+        boolean allowKerberosCfgNew = Boolean.valueOf(newModel.getConfig().getFirst(KerberosConstants.ALLOW_KERBEROS_AUTHENTICATION));
+        if (!allowKerberosCfgOld && allowKerberosCfgNew) {
+            CredentialHelper.setOrReplaceAuthenticationRequirement(session, realm, CredentialRepresentation.KERBEROS,
+                    AuthenticationExecutionModel.Requirement.ALTERNATIVE, AuthenticationExecutionModel.Requirement.DISABLED);
+        } else if(allowKerberosCfgOld && !allowKerberosCfgNew) {
+            CredentialHelper.setOrReplaceAuthenticationRequirement(session, realm, CredentialRepresentation.KERBEROS,
+                    AuthenticationExecutionModel.Requirement.DISABLED, AuthenticationExecutionModel.Requirement.ALTERNATIVE);
+        } // else: keep current settings
     }
 
     @Override
@@ -645,16 +680,6 @@ public class LDAPStorageProviderFactory implements UserStorageProviderFactory<LD
 
     protected KerberosUsernamePasswordAuthenticator createKerberosUsernamePasswordAuthenticator(CommonKerberosConfig kerberosConfig) {
         return new KerberosUsernamePasswordAuthenticator(kerberosConfig);
-    }
-
-    public static boolean checkKerberosCredential(KeycloakSession session, RealmModel realm, ComponentModel model) {
-        String allowKerberosCfg = model.getConfig().getFirst(KerberosConstants.ALLOW_KERBEROS_AUTHENTICATION);
-        if (Boolean.valueOf(allowKerberosCfg)) {
-            CredentialHelper.setOrReplaceAuthenticationRequirement(session, realm, CredentialRepresentation.KERBEROS,
-                    AuthenticationExecutionModel.Requirement.ALTERNATIVE, AuthenticationExecutionModel.Requirement.DISABLED);
-            return true;
-        }
-        return false;
     }
 
  }

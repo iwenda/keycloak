@@ -24,11 +24,11 @@ import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.RoleModel;
 import org.keycloak.models.UserModel;
+import org.keycloak.models.UserModelDefaultMethods;
 import org.keycloak.models.utils.DefaultRoles;
 import org.keycloak.models.utils.RoleUtils;
 import org.keycloak.storage.ReadOnlyException;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedList;
@@ -40,16 +40,10 @@ import java.util.Set;
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
  * @version $Revision: 1 $
  */
-public class InMemoryUserAdapter implements UserModel {
-    private String username;
+public class InMemoryUserAdapter extends UserModelDefaultMethods {
     private Long createdTimestamp = Time.currentTimeMillis();
-    private String firstName;
-    private String lastName;
-    private String email;
     private boolean emailVerified;
     private boolean enabled;
-
-    private String realmId;
 
     private Set<String> roleIds = new HashSet<>();
     private Set<String> groupIds = new HashSet<>();
@@ -68,8 +62,17 @@ public class InMemoryUserAdapter implements UserModel {
         this.session = session;
         this.realm = realm;
         this.id = id;
+    }
 
+    @Override
+    public String getUsername() {
+        return getFirstAttribute(UserModel.USERNAME);
+    }
 
+    @Override
+    public void setUsername(String username) {
+        username = username==null ? null : username.toLowerCase();
+        setSingleAttribute(UserModel.USERNAME, username);
     }
 
     public void addDefaults() {
@@ -92,18 +95,6 @@ public class InMemoryUserAdapter implements UserModel {
     @Override
     public String getId() {
         return id;
-    }
-
-    @Override
-    public String getUsername() {
-        return username;
-    }
-
-    @Override
-    public void setUsername(String username) {
-        checkReadonly();
-        this.username = username.toLowerCase();
-
     }
 
     @Override
@@ -202,43 +193,6 @@ public class InMemoryUserAdapter implements UserModel {
     }
 
     @Override
-    public String getFirstName() {
-        return firstName;
-    }
-
-    @Override
-    public void setFirstName(String firstName) {
-        checkReadonly();
-        this.firstName = firstName;
-
-    }
-
-    @Override
-    public String getLastName() {
-        return lastName;
-    }
-
-    @Override
-    public void setLastName(String lastName) {
-        checkReadonly();
-        this.lastName = lastName;
-
-    }
-
-    @Override
-    public String getEmail() {
-        return email;
-    }
-
-    @Override
-    public void setEmail(String email) {
-        checkReadonly();
-        if (email != null) email = email.toLowerCase();
-        this.email = email;
-
-    }
-
-    @Override
     public boolean isEmailVerified() {
         return emailVerified;
     }
@@ -252,7 +206,7 @@ public class InMemoryUserAdapter implements UserModel {
 
     @Override
     public Set<GroupModel> getGroups() {
-        if (groupIds.size() == 0) return Collections.EMPTY_SET;
+        if (groupIds.isEmpty()) return new HashSet<>();
         Set<GroupModel> groups = new HashSet<>();
         for (String id : groupIds) {
             groups.add(realm.getGroupById(id));
@@ -311,7 +265,7 @@ public class InMemoryUserAdapter implements UserModel {
         Set<RoleModel> allRoles = getRoleMappings();
 
         // Filter to retrieve just realm roles
-        Set<RoleModel> realmRoles = new HashSet<RoleModel>();
+        Set<RoleModel> realmRoles = new HashSet<>();
         for (RoleModel role : allRoles) {
             if (role.getContainer() instanceof RealmModel) {
                 realmRoles.add(role);
@@ -322,7 +276,7 @@ public class InMemoryUserAdapter implements UserModel {
 
     @Override
     public Set<RoleModel> getClientRoleMappings(ClientModel app) {
-        Set<RoleModel> result = new HashSet<RoleModel>();
+        Set<RoleModel> result = new HashSet<>();
         Set<RoleModel> roles = getRoleMappings();
 
         for (RoleModel role : roles) {
@@ -348,7 +302,7 @@ public class InMemoryUserAdapter implements UserModel {
 
     @Override
     public Set<RoleModel> getRoleMappings() {
-        if (roleIds.size() == 0) return Collections.EMPTY_SET;
+        if (roleIds.isEmpty()) return new HashSet<>();
         Set<RoleModel> roles = new HashSet<>();
         for (String id : roleIds) {
             roles.add(realm.getRoleById(id));
